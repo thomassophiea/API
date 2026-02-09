@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { Play, Copy, Trash2, Filter, ChevronDown, ChevronRight, Code, Download, Upload, Book, Search } from 'lucide-react';
+import { Play, Copy, Trash2, Filter, ChevronDown, ChevronRight, Code, Download, Upload, Book, Search, RefreshCw, Settings2, Loader2 } from 'lucide-react';
 import { apiService } from '../services/api';
 import { toast } from 'sonner';
 
@@ -33,6 +33,99 @@ interface EndpointInfo {
   method: string;
   endpoint: string;
   description: string;
+}
+
+// --- Collection types and configs for dynamic defaults ---
+interface CollectionItem { value: string; label: string; }
+interface CollectionConfig {
+  key: string;            // unique key for state
+  displayName: string;    // shown in UI dropdown label
+  endpoint: string;       // API endpoint to fetch
+  valueField: string;     // field to use as value
+  labelField: string;     // field to use as display label
+  placeholders: string[]; // placeholders this collection resolves
+  fallback?: string;      // static default if fetch fails
+}
+
+const COLLECTION_CONFIGS: CollectionConfig[] = [
+  {
+    key: 'sites',
+    displayName: 'Site',
+    endpoint: '/v3/sites',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{siteId}', '{siteid}'],
+  },
+  {
+    key: 'aps',
+    displayName: 'Access Point',
+    endpoint: '/v1/aps',
+    valueField: 'serialNumber',
+    labelField: 'displayName',
+    placeholders: ['{apSerialNumber}', '{apserialnum}'],
+    fallback: 'CV012408S-C0102',
+  },
+  {
+    key: 'stations',
+    displayName: 'Client',
+    endpoint: '/v1/stations',
+    valueField: 'macAddress',
+    labelField: 'hostName',
+    placeholders: ['{macaddress}', '{macAddress}', '{stationId}'],
+    fallback: '44:61:32:25:F8:DD',
+  },
+  {
+    key: 'services',
+    displayName: 'Service',
+    endpoint: '/v1/services',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{serviceId}', '{serviceid}'],
+    fallback: 'Skynet',
+  },
+  {
+    key: 'roles',
+    displayName: 'Role',
+    endpoint: '/v3/roles',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{roleId}', '{roleid}'],
+    fallback: 'Skynet_Admin',
+  },
+  {
+    key: 'profiles',
+    displayName: 'Profile',
+    endpoint: '/v3/profiles',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{profileId}'],
+  },
+  {
+    key: 'switches',
+    displayName: 'Switch',
+    endpoint: '/v1/switches',
+    valueField: 'serialNumber',
+    labelField: 'displayName',
+    placeholders: ['{serialNumber}', '{switchSerialNumber}'],
+  },
+];
+
+// Static defaults for non-collection placeholders
+const staticPlaceholders: Record<string, string> = {
+  '{portNumber}': '1',
+  '{portId}': '1',
+  '{slotNumber}': '0',
+  '{userId}': 'admin',
+  '{duration}': '24h',
+  '{consoleAction}': 'enable',
+  '{hwType}': 'AP3000',
+};
+
+function extractField(item: Record<string, unknown>, field: string): string {
+  if (item[field] != null && String(item[field]).length > 0) return String(item[field]);
+  if (item.id != null) return String(item.id);
+  if (item.name != null) return String(item.name);
+  return String(item);
 }
 
 // Move categories outside component to prevent recreating on each render
@@ -132,6 +225,14 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'DELETE', endpoint: '/v3/sites/{siteId}', description: 'Delete site' },
     { method: 'POST', endpoint: '/v3/sites/clone/{siteId}', description: 'Clone site' },
     { method: 'GET', endpoint: '/v3/sites/{siteid}/stations', description: 'Get site stations' },
+    { method: 'GET', endpoint: '/v1/sites/{siteId}/report', description: 'Get site report by site ID' },
+    { method: 'GET', endpoint: '/v3/sites/report', description: 'Get site report' },
+    { method: 'GET', endpoint: '/v3/sites/report/flex', description: 'Get historical data' },
+    { method: 'GET', endpoint: '/v3/sites/report/impact', description: 'Get impact reports for all sites' },
+    { method: 'GET', endpoint: '/v3/sites/report/location/floor/{floorId}', description: 'Get station locations on floor' },
+    { method: 'GET', endpoint: '/v3/sites/report/venue', description: 'Get report for all sites in venue' },
+    { method: 'GET', endpoint: '/v3/sites/{siteId}/report/impact', description: 'Get impact reports for site' },
+    { method: 'GET', endpoint: '/v3/sites/{siteId}/report/venue', description: 'Get site report in venue' },
   ],
 
   'Stations & Clients': [
@@ -143,6 +244,7 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'GET', endpoint: '/v1/stations/query/columns', description: 'Get station query columns' },
     { method: 'GET', endpoint: '/v1/stations/{stationId}/location', description: 'Get station location' },
     { method: 'GET', endpoint: '/v1/stations/events/{macaddress}', description: 'Get station events' },
+    { method: 'GET', endpoint: '/v1/stations/{stationId}/report', description: 'Get station report by ID' },
   ],
 
   'Services & Roles': [
@@ -167,6 +269,8 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'DELETE', endpoint: '/v3/roles/{roleId}', description: 'Delete role (v3)' },
     { method: 'GET', endpoint: '/v3/roles/{roleId}/rulestats', description: 'Get role rule stats (v3)' },
     { method: 'GET', endpoint: '/v1/roles/{roleid}/stations', description: 'Get role stations' },
+    { method: 'GET', endpoint: '/v1/roles/{roleId}/report', description: 'Get role report by ID' },
+    { method: 'GET', endpoint: '/v1/services/{serviceId}/report', description: 'Get service report' },
   ],
 
   'Network Profiles & Policies': [
@@ -224,6 +328,8 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/cliconfigs/backup', description: 'Backup CLI config' },
     { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/cliconfigs/restore/{name}', description: 'Restore CLI config' },
     { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/login', description: 'Switch login' },
+    { method: 'GET', endpoint: '/v1/switches/{serialNumber}/report', description: 'Get switch report by serial number' },
+    { method: 'GET', endpoint: '/v1/switches/{serialNumber}/ports/{portId}/report', description: 'Get port report by switch' },
   ],
 
   'System Configuration': [
@@ -287,6 +393,7 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'GET', endpoint: '/v1/report/location/aps/{apSerialNumber}', description: 'Get AP location report' },
     { method: 'GET', endpoint: '/v1/report/location/floor/{floorId}', description: 'Get floor location report' },
     { method: 'GET', endpoint: '/v1/report/location/stations/{stationId}', description: 'Get station location report' },
+    { method: 'GET', endpoint: '/v1/report/sites/{siteId}/smartrf', description: 'Get site Smart RF report' },
     { method: 'GET', endpoint: '/v2/report/upgrade/devices', description: 'Get device upgrade report' },
   ],
 
@@ -427,12 +534,95 @@ const ApiTestTool = memo(() => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
   const [isMounted, setIsMounted] = useState(true);
+  const [collections, setCollections] = useState<Record<string, CollectionItem[]>>({});
+  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [isLoadingCollections, setIsLoadingCollections] = useState(false);
+  const [defaultsOpen, setDefaultsOpen] = useState(false);
 
   useEffect(() => {
     return () => {
       setIsMounted(false);
     };
   }, []);
+
+  const fetchCollections = useCallback(async () => {
+    if (!apiService.isAuthenticated()) return;
+    setIsLoadingCollections(true);
+
+    const results = await Promise.allSettled(
+      COLLECTION_CONFIGS.map(async (config) => {
+        const response = await apiService.makeAuthenticatedRequest(config.endpoint);
+        if (!response.ok) throw new Error(`${response.status}`);
+        const data = await response.json();
+        // API may return array directly or under a wrapper key
+        const items: Record<string, unknown>[] = Array.isArray(data)
+          ? data
+          : Array.isArray(data?.data) ? data.data
+          : Array.isArray(data?.items) ? data.items
+          : Array.isArray(data?.result) ? data.result
+          : [];
+        return {
+          key: config.key,
+          items: items.map((item) => ({
+            value: extractField(item, config.valueField),
+            label: extractField(item, config.labelField),
+          })),
+        };
+      })
+    );
+
+    const newCollections: Record<string, CollectionItem[]> = {};
+    const newSelections: Record<string, string> = {};
+
+    results.forEach((result, index) => {
+      const config = COLLECTION_CONFIGS[index];
+      if (result.status === 'fulfilled' && result.value.items.length > 0) {
+        newCollections[config.key] = result.value.items;
+        newSelections[config.key] = result.value.items[0].value;
+      } else {
+        console.warn(`[Collections] Failed to fetch ${config.key}:`, result.status === 'rejected' ? result.reason : 'empty');
+        newCollections[config.key] = [];
+        if (config.fallback) {
+          newSelections[config.key] = config.fallback;
+        }
+      }
+    });
+
+    setCollections(newCollections);
+    setSelections(newSelections);
+    setIsLoadingCollections(false);
+  }, []);
+
+  // Fetch collections when authenticated
+  useEffect(() => {
+    fetchCollections();
+  }, [fetchCollections]);
+
+  // Build a placeholder→value map from selections + static fallbacks
+  const applyDefaults = useCallback((endpoint: string): string => {
+    let result = endpoint;
+
+    // 1. Apply collection-based selections
+    for (const config of COLLECTION_CONFIGS) {
+      const selectedValue = selections[config.key];
+      if (selectedValue) {
+        for (const placeholder of config.placeholders) {
+          result = result.replaceAll(placeholder, selectedValue);
+        }
+      } else if (config.fallback) {
+        for (const placeholder of config.placeholders) {
+          result = result.replaceAll(placeholder, config.fallback);
+        }
+      }
+    }
+
+    // 2. Apply static placeholders
+    for (const [placeholder, value] of Object.entries(staticPlaceholders)) {
+      result = result.replaceAll(placeholder, value);
+    }
+
+    return result;
+  }, [selections]);
 
   // Memoize filtered endpoints for performance
   const filteredEndpoints = useMemo(() => {
@@ -634,10 +824,10 @@ const ApiTestTool = memo(() => {
 
   const loadEndpoint = useCallback((endpoint: EndpointInfo) => {
     setCurrentMethod(endpoint.method);
-    setCurrentEndpoint(endpoint.endpoint);
+    setCurrentEndpoint(applyDefaults(endpoint.endpoint));
     setRequestBody('');
     toast.success(`Loaded ${endpoint.method} ${endpoint.endpoint}`);
-  }, []);
+  }, [applyDefaults]);
 
   const toggleCategory = useCallback((category: string) => {
     setOpenCategories(prev => ({
@@ -652,6 +842,88 @@ const ApiTestTool = memo(() => {
         <div className="grid grid-cols-1 lg:grid-cols-2 h-full gap-0">
           {/* Left Panel: API Browser */}
           <div className="flex flex-col border-r border-border bg-card">
+            {/* Active Defaults Bar */}
+            <div className="border-b border-border">
+              <Collapsible open={defaultsOpen} onOpenChange={setDefaultsOpen}>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    className="w-full justify-between p-3 h-auto rounded-none hover:bg-accent/50"
+                  >
+                    <div className="flex items-center space-x-2">
+                      <Settings2 className="h-4 w-4 text-primary" />
+                      <span className="text-sm font-medium">Active Defaults</span>
+                      <Badge variant="secondary" className="text-xs">
+                        {Object.values(selections).filter(Boolean).length}
+                      </Badge>
+                      {isLoadingCollections && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+                    </div>
+                    {defaultsOpen ? (
+                      <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    )}
+                  </Button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="px-3 pb-3 space-y-2">
+                    {COLLECTION_CONFIGS.map((config) => {
+                      const items = collections[config.key] || [];
+                      const hasItems = items.length > 0;
+                      return (
+                        <div key={config.key} className="flex items-center space-x-2">
+                          <Label className="text-xs text-muted-foreground w-20 shrink-0 text-right">
+                            {config.displayName}
+                          </Label>
+                          {isLoadingCollections ? (
+                            <div className="flex-1 h-8 bg-muted animate-pulse rounded-md" />
+                          ) : (
+                            <Select
+                              value={selections[config.key] || ''}
+                              onValueChange={(value) =>
+                                setSelections((prev) => ({ ...prev, [config.key]: value }))
+                              }
+                            >
+                              <SelectTrigger className="h-8 text-xs flex-1">
+                                <SelectValue placeholder={hasItems ? 'Select...' : 'No data'} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {hasItems ? (
+                                  items.map((item) => (
+                                    <SelectItem key={item.value} value={item.value} className="text-xs">
+                                      {item.label !== item.value
+                                        ? `${item.label} (${item.value})`
+                                        : item.value}
+                                    </SelectItem>
+                                  ))
+                                ) : (
+                                  <SelectItem value={config.fallback || '__none__'} disabled={!config.fallback} className="text-xs">
+                                    {config.fallback ? `${config.fallback} (default)` : 'No data available'}
+                                  </SelectItem>
+                                )}
+                              </SelectContent>
+                            </Select>
+                          )}
+                        </div>
+                      );
+                    })}
+                    <div className="flex justify-end pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={fetchCollections}
+                        disabled={isLoadingCollections}
+                      >
+                        <RefreshCw className={`h-3 w-3 mr-1 ${isLoadingCollections ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </Button>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            </div>
+
             <div className="p-4 border-b border-border bg-muted/30">
               <div className="flex items-center space-x-2 mb-3">
                 <Book className="h-5 w-5 text-primary" />
