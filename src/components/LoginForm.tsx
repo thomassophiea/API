@@ -2,24 +2,23 @@ import { useState } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from './ui/card';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
-import { Loader2 } from 'lucide-react';
-import { ImageWithFallback } from './figma/ImageWithFallback';
-import extremeNetworksLogo from 'figma:asset/f6780e138108fdbc214f37376d5cea1e3356ac35.png';
+import { Loader2, Wifi, AlertCircle, CheckCircle } from 'lucide-react';
 import { apiService } from '../services/api';
+import apiIcon from 'figma:asset/9b113141d05aa63f60dde131842d18390c8c9401.png';
 
 interface LoginFormProps {
   onLoginSuccess: () => void;
-  theme?: 'light' | 'dark' | 'synthwave' | 'system';
-  onThemeToggle?: () => void;
 }
 
-export function LoginForm({ onLoginSuccess, theme = 'system', onThemeToggle }: LoginFormProps) {
+export function LoginForm({ onLoginSuccess }: LoginFormProps) {
   const [userId, setUserId] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [isTestingConnection, setIsTestingConnection] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'unknown' | 'success' | 'failure'>('unknown');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -30,42 +29,42 @@ export function LoginForm({ onLoginSuccess, theme = 'system', onThemeToggle }: L
       await apiService.login(userId, password);
       onLoginSuccess();
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Login failed';
-      
-      // Provide more helpful error messages
-      if (errorMessage.includes('401') || errorMessage.includes('Invalid credentials')) {
-        setError('Invalid username or password. Please check your credentials and try again.');
-      } else if (errorMessage.includes('422') || errorMessage.includes('request format')) {
-        setError('Authentication format error. Please contact support if this persists.');
-      } else if (errorMessage.includes('timeout')) {
-        setError('Connection timeout. Please check your network and try again.');
-      } else {
-        setError(errorMessage);
-      }
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setIsLoading(false);
     }
   };
 
+  const handleTestConnection = async () => {
+    setIsTestingConnection(true);
+    setError('');
 
+    try {
+      const result = await apiService.testConnectivity();
+      setConnectionStatus(result.success ? 'success' : 'failure');
+      if (!result.success) {
+        setError(`Connection test failed: ${result.message}`);
+      }
+    } catch (err) {
+      setConnectionStatus('failure');
+      setError(`Connection test error: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setIsTestingConnection(false);
+    }
+  };
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <div className="w-full max-w-md space-y-4">
-        <Card className="w-full">
-          <CardHeader className="space-y-1 text-center">
-            <div className="flex justify-center mb-4">
-              <ImageWithFallback 
-                src={extremeNetworksLogo}
-                alt="AURA Platform"
-                className="h-12 w-12 object-contain"
-              />
-            </div>
-            <CardTitle className="text-2xl"><span className="font-bold">Extreme</span> Platform ONE™ | AURA</CardTitle>
-            <CardDescription className="text-center mt-2">
-              Autonomous Unified Radio Agent
-            </CardDescription>
-          </CardHeader>
+      <Card className="w-full max-w-md border-border bg-card">
+        <CardHeader className="space-y-1 text-center">
+          <div className="flex justify-center mb-4">
+            <img src={apiIcon} alt="API" className="h-12 w-12 dark:invert transition-all" />
+          </div>
+          <CardTitle className="text-2xl text-foreground">API Test Tool</CardTitle>
+          <CardDescription className="text-muted-foreground">
+            Sign in to test and explore API endpoints
+          </CardDescription>
+        </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
@@ -96,27 +95,67 @@ export function LoginForm({ onLoginSuccess, theme = 'system', onThemeToggle }: L
             </div>
             {error && (
               <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
+                <AlertDescription>
+                  <div className="space-y-2">
+                    <div>{error}</div>
+                    <div className="text-xs opacity-75">
+                      - Verify your username and password are correct<br/>
+                      - Ensure the API server is accessible<br/>
+                      - Check network connectivity to {window.location.hostname}
+                    </div>
+                  </div>
+                </AlertDescription>
               </Alert>
             )}
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={isLoading || !userId.trim() || !password.trim()}
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Authenticating...
-                </>
-              ) : (
-                'Sign In'
-              )}
-            </Button>
+            <div className="space-y-2">
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={isLoading || !userId.trim() || !password.trim()}
+              >
+                {isLoading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Authenticating...
+                  </>
+                ) : (
+                  'Sign In'
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleTestConnection}
+                disabled={isTestingConnection || isLoading}
+              >
+                {isTestingConnection ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Testing Connection...
+                  </>
+                ) : (
+                  <>
+                    {connectionStatus === 'success' && <CheckCircle className="mr-2 h-4 w-4 text-green-500 dark:text-green-400" />}
+                    {connectionStatus === 'failure' && <AlertCircle className="mr-2 h-4 w-4 text-red-500 dark:text-red-400" />}
+                    {connectionStatus === 'unknown' && <Wifi className="mr-2 h-4 w-4" />}
+                    Test Connection
+                  </>
+                )}
+              </Button>
+            </div>
           </form>
+          <div className="mt-6 text-xs text-center text-muted-foreground space-y-2">
+            <div className="pt-2 border-t border-border/50">
+              <strong>Troubleshooting:</strong><br/>
+              - Use your API server username/password<br/>
+              - Ensure the server is online and accessible<br/>
+              - Check firewall settings for HTTPS (port 443)
+            </div>
+          </div>
         </CardContent>
-        </Card>
-      </div>
+      </Card>
     </div>
   );
 }
