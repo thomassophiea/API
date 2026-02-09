@@ -172,7 +172,7 @@ export default function App() {
                   {theme === 'light' && <Sun className="h-4 w-4" />}
                   {theme === 'dark' && <Moon className="h-4 w-4" />}
                   {theme === 'system' && <Monitor className="h-4 w-4" />}
-                  <span className="sr-only">Toggle theme</span>
+                  <span className="text-xs capitalize">{theme}</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
