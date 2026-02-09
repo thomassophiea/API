@@ -108,6 +108,134 @@ const COLLECTION_CONFIGS: CollectionConfig[] = [
     labelField: 'displayName',
     placeholders: ['{serialNumber}', '{switchSerialNumber}'],
   },
+  {
+    key: 'adsp',
+    displayName: 'Air Defense',
+    endpoint: '/v3/adsp',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{adspId}'],
+  },
+  {
+    key: 'analytics',
+    displayName: 'Analytics',
+    endpoint: '/v3/analytics',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{analyticsProfileId}'],
+  },
+  {
+    key: 'cos',
+    displayName: 'Class of Service',
+    endpoint: '/v1/cos',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{cosId}'],
+  },
+  {
+    key: 'ratelimiters',
+    displayName: 'Rate Limiter',
+    endpoint: '/v1/ratelimiters',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{rateLimiterId}'],
+  },
+  {
+    key: 'iotprofile',
+    displayName: 'IoT Profile',
+    endpoint: '/v3/iotprofile',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{iotprofileId}'],
+  },
+  {
+    key: 'rtlsprofile',
+    displayName: 'RTLS Profile',
+    endpoint: '/v1/rtlsprofile',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{rtlsprofileId}'],
+  },
+  {
+    key: 'positioning',
+    displayName: 'Positioning',
+    endpoint: '/v3/positioning',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{positioningProfileId}'],
+  },
+  {
+    key: 'xlocation',
+    displayName: 'XLocation',
+    endpoint: '/v3/xlocation',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{xlocationId}'],
+  },
+  {
+    key: 'meshpoints',
+    displayName: 'Meshpoint',
+    endpoint: '/v3/meshpoints',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{meshpointId}'],
+  },
+  {
+    key: 'topologies',
+    displayName: 'Topology',
+    endpoint: '/v1/topologies',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{topologyId}'],
+  },
+  {
+    key: 'rfmgmt',
+    displayName: 'RF Management',
+    endpoint: '/v3/rfmgmt',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{rfmgmtId}'],
+  },
+  {
+    key: 'eguest',
+    displayName: 'EGuest',
+    endpoint: '/v1/eguest',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{eguestId}'],
+  },
+  {
+    key: 'aaapolicy',
+    displayName: 'AAA Policy',
+    endpoint: '/v1/aaapolicy',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: [],
+  },
+  {
+    key: 'reportTemplates',
+    displayName: 'Report Template',
+    endpoint: '/v1/reports/templates',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{templateId}'],
+  },
+  {
+    key: 'scheduledReports',
+    displayName: 'Scheduled Report',
+    endpoint: '/v1/reports/scheduled',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: ['{reportId}'],
+  },
+  {
+    key: 'switchportprofile',
+    displayName: 'Switch Port Profile',
+    endpoint: '/v3/switchportprofile',
+    valueField: 'id',
+    labelField: 'name',
+    placeholders: [],
+  },
 ];
 
 // Static defaults for non-collection placeholders
@@ -119,7 +247,90 @@ const staticPlaceholders: Record<string, string> = {
   '{duration}': '24h',
   '{consoleAction}': 'enable',
   '{hwType}': 'AP3000',
+  '{configurationMode}': 'managed',
 };
+
+// Dropdown options for static (non-collection) parameters
+const STATIC_PARAM_OPTIONS: Record<string, { label: string; options: { value: string; label: string }[] }> = {
+  portNumber: {
+    label: 'Port Number',
+    options: Array.from({ length: 48 }, (_, i) => ({ value: String(i + 1), label: `Port ${i + 1}` })),
+  },
+  portId: {
+    label: 'Port ID',
+    options: Array.from({ length: 48 }, (_, i) => ({ value: String(i + 1), label: `Port ${i + 1}` })),
+  },
+  slotNumber: {
+    label: 'Slot Number',
+    options: [
+      { value: '0', label: 'Slot 0' },
+      { value: '1', label: 'Slot 1' },
+      { value: '2', label: 'Slot 2' },
+      { value: '3', label: 'Slot 3' },
+    ],
+  },
+  consoleAction: {
+    label: 'Console Action',
+    options: [
+      { value: 'enable', label: 'Enable' },
+      { value: 'disable', label: 'Disable' },
+    ],
+  },
+  duration: {
+    label: 'Duration',
+    options: [
+      { value: '1h', label: '1 Hour' },
+      { value: '6h', label: '6 Hours' },
+      { value: '24h', label: '24 Hours' },
+      { value: '7d', label: '7 Days' },
+      { value: '30d', label: '30 Days' },
+    ],
+  },
+  hwType: {
+    label: 'Hardware Type',
+    options: [
+      { value: 'AP3000', label: 'AP3000' },
+      { value: 'AP4000', label: 'AP4000' },
+      { value: 'AP1201', label: 'AP1201' },
+      { value: 'AP1201H', label: 'AP1201H' },
+      { value: 'AP1231', label: 'AP1231' },
+      { value: 'AP1301', label: 'AP1301' },
+      { value: 'AP1301H', label: 'AP1301H' },
+      { value: 'AP1311', label: 'AP1311' },
+      { value: 'AP1331', label: 'AP1331' },
+      { value: 'AP1351', label: 'AP1351' },
+      { value: 'AP1431', label: 'AP1431' },
+    ],
+  },
+  configurationMode: {
+    label: 'Config Mode',
+    options: [
+      { value: 'managed', label: 'Managed' },
+      { value: 'autonomous', label: 'Autonomous' },
+    ],
+  },
+  userId: {
+    label: 'User ID',
+    options: [
+      { value: 'admin', label: 'admin' },
+    ],
+  },
+};
+
+// Context-aware param → collection resolution (handles shared placeholder names)
+function resolveParamConfig(template: string, paramName: string): CollectionConfig | undefined {
+  // Override for {profileId} when used in switchportprofile context
+  if (paramName === 'profileId' && template.includes('switchportprofile')) {
+    return COLLECTION_CONFIGS.find(c => c.key === 'switchportprofile');
+  }
+  // Generic {id} → resolve by path context
+  if (paramName === 'id') {
+    if (template.includes('/aaapolicy/')) return COLLECTION_CONFIGS.find(c => c.key === 'aaapolicy');
+    return undefined;
+  }
+  const placeholder = `{${paramName}}`;
+  return COLLECTION_CONFIGS.find(c => c.placeholders.includes(placeholder));
+}
 
 function extractField(item: Record<string, unknown>, field: string): string {
   if (item[field] != null && String(item[field]).length > 0) return String(item[field]);
@@ -538,6 +749,8 @@ const ApiTestTool = memo(() => {
   const [selections, setSelections] = useState<Record<string, string>>({});
   const [isLoadingCollections, setIsLoadingCollections] = useState(false);
   const [defaultsOpen, setDefaultsOpen] = useState(false);
+  const [endpointTemplate, setEndpointTemplate] = useState('');
+  const [paramValues, setParamValues] = useState<Record<string, string>>({});
 
   useEffect(() => {
     return () => {
@@ -598,31 +811,24 @@ const ApiTestTool = memo(() => {
     fetchCollections();
   }, [fetchCollections]);
 
-  // Build a placeholder→value map from selections + static fallbacks
-  const applyDefaults = useCallback((endpoint: string): string => {
-    let result = endpoint;
+  // Parse {param} names from the current endpoint template
+  const endpointParams = useMemo(() => {
+    if (!endpointTemplate) return [];
+    const matches = endpointTemplate.match(/\{([^}]+)\}/g) || [];
+    return [...new Set(matches.map(m => m.slice(1, -1)))];
+  }, [endpointTemplate]);
 
-    // 1. Apply collection-based selections
-    for (const config of COLLECTION_CONFIGS) {
-      const selectedValue = selections[config.key];
-      if (selectedValue) {
-        for (const placeholder of config.placeholders) {
-          result = result.replaceAll(placeholder, selectedValue);
-        }
-      } else if (config.fallback) {
-        for (const placeholder of config.placeholders) {
-          result = result.replaceAll(placeholder, config.fallback);
-        }
+  // Rebuild the resolved endpoint whenever template or paramValues change
+  useEffect(() => {
+    if (!endpointTemplate) return;
+    let resolved = endpointTemplate;
+    for (const [name, value] of Object.entries(paramValues)) {
+      if (value) {
+        resolved = resolved.replaceAll(`{${name}}`, value);
       }
     }
-
-    // 2. Apply static placeholders
-    for (const [placeholder, value] of Object.entries(staticPlaceholders)) {
-      result = result.replaceAll(placeholder, value);
-    }
-
-    return result;
-  }, [selections]);
+    setCurrentEndpoint(resolved);
+  }, [endpointTemplate, paramValues]);
 
   // Memoize filtered endpoints for performance
   const filteredEndpoints = useMemo(() => {
@@ -818,16 +1024,45 @@ const ApiTestTool = memo(() => {
   const loadFromHistory = useCallback((request: ApiRequest) => {
     setCurrentMethod(request.method);
     setCurrentEndpoint(request.endpoint);
+    setEndpointTemplate('');
+    setParamValues({});
     setRequestBody(request.body || '');
     toast.success('Request loaded from history');
   }, []);
 
+  const updateParam = useCallback((paramName: string, value: string) => {
+    setParamValues(prev => ({ ...prev, [paramName]: value }));
+    // Sync to global selections if this param maps to a collection
+    const config = resolveParamConfig(endpointTemplate, paramName);
+    if (config) {
+      setSelections(prev => ({ ...prev, [config.key]: value }));
+    }
+  }, [endpointTemplate]);
+
   const loadEndpoint = useCallback((endpoint: EndpointInfo) => {
     setCurrentMethod(endpoint.method);
-    setCurrentEndpoint(applyDefaults(endpoint.endpoint));
+    setEndpointTemplate(endpoint.endpoint);
+
+    // Parse params and set initial values from selections/static defaults
+    const params = endpoint.endpoint.match(/\{([^}]+)\}/g) || [];
+    const initialValues: Record<string, string> = {};
+
+    for (const param of params) {
+      const paramName = param.slice(1, -1);
+      const config = resolveParamConfig(endpoint.endpoint, paramName);
+      if (config && selections[config.key]) {
+        initialValues[paramName] = selections[config.key];
+      } else if (staticPlaceholders[param]) {
+        initialValues[paramName] = staticPlaceholders[param];
+      } else {
+        initialValues[paramName] = '';
+      }
+    }
+
+    setParamValues(initialValues);
     setRequestBody('');
     toast.success(`Loaded ${endpoint.method} ${endpoint.endpoint}`);
-  }, [applyDefaults]);
+  }, [selections]);
 
   const toggleCategory = useCallback((category: string) => {
     setOpenCategories(prev => ({
@@ -1090,6 +1325,86 @@ const ApiTestTool = memo(() => {
                             />
                           </div>
                         </div>
+
+                        {/* Inline Parameter Dropdowns */}
+                        {endpointParams.length > 0 && (
+                          <div className="space-y-2 p-3 bg-muted/30 rounded-lg border border-border">
+                            <Label className="text-xs text-muted-foreground uppercase tracking-wider font-semibold">
+                              Path Parameters
+                            </Label>
+                            <div className="grid grid-cols-2 gap-3">
+                              {endpointParams.map((paramName) => {
+                                const config = resolveParamConfig(endpointTemplate, paramName);
+                                const staticOpts = STATIC_PARAM_OPTIONS[paramName];
+
+                                if (config) {
+                                  const items = collections[config.key] || [];
+                                  return (
+                                    <div key={paramName} className="space-y-1">
+                                      <Label className="text-xs font-medium">{config.displayName}</Label>
+                                      {isLoadingCollections ? (
+                                        <div className="h-8 bg-muted animate-pulse rounded-md" />
+                                      ) : (
+                                        <Select
+                                          value={paramValues[paramName] || ''}
+                                          onValueChange={(v) => updateParam(paramName, v)}
+                                        >
+                                          <SelectTrigger className="h-8 text-xs">
+                                            <SelectValue placeholder={items.length > 0 ? 'Select...' : 'No data'} />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            {items.map((item) => (
+                                              <SelectItem key={item.value} value={item.value} className="text-xs">
+                                                {item.label !== item.value
+                                                  ? `${item.label} (${item.value})`
+                                                  : item.value}
+                                              </SelectItem>
+                                            ))}
+                                          </SelectContent>
+                                        </Select>
+                                      )}
+                                    </div>
+                                  );
+                                }
+
+                                if (staticOpts) {
+                                  return (
+                                    <div key={paramName} className="space-y-1">
+                                      <Label className="text-xs font-medium">{staticOpts.label}</Label>
+                                      <Select
+                                        value={paramValues[paramName] || ''}
+                                        onValueChange={(v) => updateParam(paramName, v)}
+                                      >
+                                        <SelectTrigger className="h-8 text-xs">
+                                          <SelectValue placeholder="Select..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          {staticOpts.options.map((opt) => (
+                                            <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                                              {opt.label}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div key={paramName} className="space-y-1">
+                                    <Label className="text-xs font-medium">{paramName}</Label>
+                                    <Input
+                                      className="h-8 text-xs"
+                                      value={paramValues[paramName] || ''}
+                                      onChange={(e) => updateParam(paramName, e.target.value)}
+                                      placeholder={`Enter ${paramName}...`}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         {['POST', 'PUT', 'PATCH'].includes(currentMethod) && (
                           <div>
