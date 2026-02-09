@@ -1,15 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <title>Extreme Platform ONE | AURA</title>
 
-  <!DOCTYPE html>
-  <html lang="en">
-    <head>
-      <meta charset="UTF-8" />
-      <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-      <title>A-Team Mobility Engine API (TGS)</title>
-    </head>
+    <!-- Cache control - ensure fresh HTML on every request -->
+    <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
 
-    <body>
-      <div id="root"></div>
-      <script type="module" src="/src/main.tsx"></script>
-    </body>
-  </html>
-  
+    <!-- Critical inline styles for boot surface - prevents blank screen during hydration -->
+    <style id="boot-styles">
+      /* Static background colors - never rely on CSS variables during boot */
+      html, body, #root {
+        margin: 0;
+        padding: 0;
+        min-height: 100vh;
+        min-height: 100dvh;
+      }
+      /* Dark theme defaults (most common) - light theme overridden below */
+      html, body {
+        background-color: #0a0a0a !important;
+        color: rgba(255, 255, 255, 0.87) !important;
+      }
+      html.light, html.light body {
+        background-color: #fafafa !important;
+        color: rgba(0, 0, 0, 0.87) !important;
+      }
+      /* Boot surface - covers screen until app is hydrated */
+      #boot-surface {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 32px;
+        transition: opacity 200ms ease-out;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      }
+      html.light #boot-surface {
+        background: linear-gradient(135deg, #fafafa 0%, #f0f0f5 100%);
+      }
+      #boot-surface.fade-out {
+        opacity: 0;
+        pointer-events: none;
+      }
+      /* Logo/Brand */
+      .boot-brand {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+      }
+      .boot-logo {
+        width: 64px;
+        height: 64px;
+        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+        border-radius: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3);
+        animation: boot-pulse 2s ease-in-out infinite;
+      }
+      .boot-logo svg {
+        width: 36px;
+        height: 36px;
+        color: white;
+      }
+      .boot-title {
+        font-size: 20px;
+        font-weight: 600;
+        letter-spacing: -0.025em;
+        color: rgba(255, 255, 255, 0.95);
+        margin-top: 8px;
+      }
+      html.light .boot-title {
+        color: rgba(0, 0, 0, 0.9);
+      }
+      .boot-subtitle {
+        font-size: 13px;
+        color: rgba(255, 255, 255, 0.5);
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+      }
+      html.light .boot-subtitle {
+        color: rgba(0, 0, 0, 0.45);
+      }
+      /* Loading indicator */
+      .boot-loader {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+      }
+      .boot-dots {
+        display: flex;
+        gap: 8px;
+      }
+      .boot-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: rgba(99, 102, 241, 0.3);
+        animation: boot-dot 1.4s ease-in-out infinite;
+      }
+      .boot-dot:nth-child(1) { animation-delay: 0s; }
+      .boot-dot:nth-child(2) { animation-delay: 0.2s; }
+      .boot-dot:nth-child(3) { animation-delay: 0.4s; }
+      .boot-status {
+        font-size: 12px;
+        color: rgba(255, 255, 255, 0.4);
+      }
+      html.light .boot-status {
+        color: rgba(0, 0, 0, 0.35);
+      }
+      @keyframes boot-pulse {
+        0%, 100% { transform: scale(1); box-shadow: 0 8px 32px rgba(99, 102, 241, 0.3); }
+        50% { transform: scale(1.02); box-shadow: 0 12px 40px rgba(99, 102, 241, 0.4); }
+      }
+      @keyframes boot-dot {
+        0%, 80%, 100% { background: rgba(99, 102, 241, 0.3); transform: scale(1); }
+        40% { background: rgba(99, 102, 241, 1); transform: scale(1.2); }
+      }
+    </style>
+
+    <!-- Inline script to prevent FOUC - apply theme immediately -->
+    <script>
+      (function() {
+        const theme = localStorage.getItem('theme') || 'system';
+        const effectiveTheme = theme === 'system'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : theme === 'light' ? 'default' : theme;
+
+        document.documentElement.classList.add(effectiveTheme === 'default' ? 'light' : effectiveTheme);
+        document.documentElement.classList.add(`theme-${effectiveTheme}`);
+      })();
+    </script>
+
+  </head>
+
+  <body>
+    <!-- Boot surface - removed after React hydration -->
+    <div id="boot-surface" aria-hidden="true">
+      <div class="boot-brand">
+        <div class="boot-logo">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+            <path d="M2 17l10 5 10-5"/>
+            <path d="M2 12l10 5 10-5"/>
+          </svg>
+        </div>
+        <div class="boot-title">Extreme Platform ONE</div>
+        <div class="boot-subtitle">AURA</div>
+      </div>
+      <div class="boot-loader">
+        <div class="boot-dots">
+          <div class="boot-dot"></div>
+          <div class="boot-dot"></div>
+          <div class="boot-dot"></div>
+        </div>
+        <div class="boot-status">Loading...</div>
+      </div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

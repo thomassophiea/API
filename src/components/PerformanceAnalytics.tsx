@@ -27,207 +27,452 @@ import {
   Activity, 
   TrendingUp, 
   TrendingDown,
-  Zap,
   Users,
   Wifi,
   Server,
   RefreshCw,
   Download,
-  Calendar,
-  Filter,
+  Clock,
   BarChart3,
   AlertTriangle,
   CheckCircle,
-  Clock
+  MapPin,
+  Filter
 } from 'lucide-react';
 import { apiService } from '../services/api';
 import { toast } from 'sonner';
 
-interface PerformanceMetrics {
-  timestamp: string;
-  apHealth: number;
-  clientCount: number;
-  siteHealth: number;
-  switchHealth: number;
-  totalDevices: number;
-}
-
-interface DevicePerformance {
+interface Site {
+  id: string;
   name: string;
-  type: 'AP' | 'Switch' | 'Site';
-  status: string;
-  clients: number;
-  uptime: number;
-  health: number;
-  throughput?: number;
-  responseTime?: number;
+  status?: string;
 }
 
-const CHART_COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1'];
+interface ReportWidget {
+  id: string;
+  name: string;
+  type: string;
+  data: any;
+}
+
+interface SiteReport {
+  siteId: string;
+  siteName: string;
+  widgets: any[];
+  metrics: {
+    apCount?: number;
+    clientCount?: number;
+    uptime?: number;
+    throughput?: number;
+    health?: number;
+  };
+}
+
+interface APReport {
+  apId: string;
+  name: string;
+  serialNumber: string;
+  siteId?: string;
+  siteName?: string;
+  status: string;
+  clientCount: number;
+  health: number;
+  uptime: number;
+  throughput?: number;
+}
+
+const CHART_COLORS = ['#8b5cf6', '#1dd1a1', '#06b6d4', '#f59e0b', '#ef4444'];
 
 export function PerformanceAnalytics() {
-  const [performanceData, setPerformanceData] = useState<PerformanceMetrics[]>([]);
-  const [devicePerformance, setDevicePerformance] = useState<DevicePerformance[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [selectedSite, setSelectedSite] = useState<string>('all');
+  const [siteReports, setSiteReports] = useState<SiteReport[]>([]);
+  const [apReports, setApReports] = useState<APReport[]>([]);
+  const [reportWidgets, setReportWidgets] = useState<ReportWidget[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [selectedTimeRange, setSelectedTimeRange] = useState('24h');
-  const [selectedMetric, setSelectedMetric] = useState('health');
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Generate mock historical data based on current real data
-  const generateHistoricalData = (currentData: any): PerformanceMetrics[] => {
-    const now = new Date();
-    const points = selectedTimeRange === '1h' ? 12 : selectedTimeRange === '24h' ? 24 : 30;
-    const interval = selectedTimeRange === '1h' ? 5 : selectedTimeRange === '24h' ? 60 : 1440; // minutes
+  // Fetch available sites with fallback
+  const fetchSites = async () => {
+    const siteEndpoints = ['/v3/sites', '/v1/sites'];
     
-    const data: PerformanceMetrics[] = [];
-    
-    for (let i = points - 1; i >= 0; i--) {
-      const timestamp = new Date(now.getTime() - (i * interval * 60 * 1000));
-      
-      // Base values from current data with some realistic variation
-      const baseApHealth = currentData.apHealth || 85;
-      const baseClientCount = currentData.clientCount || 50;
-      const baseSiteHealth = currentData.siteHealth || 90;
-      const baseSwitchHealth = currentData.switchHealth || 95;
-      const baseTotalDevices = currentData.totalDevices || 20;
-      
-      // Add realistic variations
-      const variation = (Math.random() - 0.5) * 20; // ±10%
-      const timeOfDayFactor = Math.sin((timestamp.getHours() / 24) * Math.PI * 2) * 0.2;
-      
-      data.push({
-        timestamp: timestamp.toLocaleTimeString('en-US', { 
-          hour: '2-digit', 
-          minute: '2-digit',
-          ...(selectedTimeRange === '30d' ? { month: 'short', day: 'numeric' } : {})
-        }),
-        apHealth: Math.max(0, Math.min(100, baseApHealth + variation + (timeOfDayFactor * 10))),
-        clientCount: Math.max(0, baseClientCount + Math.round(variation * 2) + Math.round(timeOfDayFactor * 30)),
-        siteHealth: Math.max(0, Math.min(100, baseSiteHealth + variation * 0.5)),
-        switchHealth: Math.max(0, Math.min(100, baseSwitchHealth + variation * 0.3)),
-        totalDevices: Math.max(0, baseTotalDevices + Math.round(variation * 0.1))
-      });
+    for (const endpoint of siteEndpoints) {
+      try {
+        const response = await apiService.makeAuthenticatedRequest(endpoint, {}, 3000);
+        if (response.ok) {
+          const data = await response.json();
+          const sitesData = Array.isArray(data) ? data : data.sites || [];
+          setSites(sitesData.map((site: any) => ({
+            id: site.id || site.siteId,
+            name: site.name || site.siteName || `Site ${site.id}`,
+            status: site.status
+          })));
+          console.log(`Sites data loaded successfully from: ${endpoint}`);
+          return;
+        }
+      } catch (err) {
+        console.log(`Sites endpoint ${endpoint} failed:`, err instanceof Error ? err.message : 'Unknown error');
+      }
     }
-    
-    return data;
+    console.log('All sites endpoints failed, but continuing with empty sites array');
   };
 
+  // Fetch site report widgets with fallback strategies
+  const fetchSiteReportWidgets = async () => {
+    const widgetEndpoints = [
+      '/v1/sites/report/widgets',   // Try v1 first
+      '/v3/sites/report/widgets',   // Original v3 endpoint
+      '/v1/reports/widgets'         // General widgets endpoint
+    ];
+
+    for (const endpoint of widgetEndpoints) {
+      try {
+        const response = await apiService.makeAuthenticatedRequest(endpoint, {}, 3000);
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`Site widgets successful with endpoint: ${endpoint}`);
+          return Array.isArray(data) ? data : data.widgets || [];
+        }
+      } catch (err) {
+        console.log(`Widget endpoint ${endpoint} failed:`, err instanceof Error ? err.message : 'Unknown error');
+      }
+    }
+    
+    console.log('All widget endpoints failed, returning empty array');
+    return [];
+  };
+
+  // Fetch sites report (all sites overview) with fallback strategies
+  const fetchSitesReport = async () => {
+    // Try multiple endpoints for sites reports
+    const sitesReportEndpoints = [
+      '/v1/sites/report',         // Try v1 first
+      '/v3/sites/report',         // Original v3 endpoint  
+      '/v1/report/sites'          // Alternative structure
+    ];
+
+    for (const endpoint of sitesReportEndpoints) {
+      try {
+        const response = await apiService.makeAuthenticatedRequest(endpoint, {}, 4000);
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`Sites report successful with endpoint: ${endpoint}`);
+          return data;
+        }
+      } catch (err) {
+        console.log(`Sites report endpoint ${endpoint} failed:`, err instanceof Error ? err.message : 'Unknown error');
+      }
+    }
+    
+    // If all report endpoints fail, fall back to basic sites data
+    try {
+      console.log('Falling back to basic sites data for analytics');
+      const response = await apiService.makeAuthenticatedRequest('/v3/sites', {}, 4000);
+      if (response.ok) {
+        const sitesData = await response.json();
+        // Transform basic sites data into a report-like structure
+        return {
+          sites: Array.isArray(sitesData) ? sitesData : sitesData.sites || [],
+          generated: new Date().toISOString(),
+          fallback: true
+        };
+      }
+    } catch (err) {
+      console.log('Fallback to basic sites data also failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+    
+    return null;
+  };
+
+  // Fetch individual site report with fallback strategies
+  const fetchSiteReport = async (siteId: string) => {
+    // Try multiple endpoints for site reports, starting with most likely to work
+    const siteReportEndpoints = [
+      `/v1/sites/${siteId}/report`,  // Try v1 first as it's more commonly available
+      `/v3/sites/${siteId}/report`,  // Original v3 endpoint
+      `/v1/report/sites/${siteId}`   // Alternative report endpoint structure
+    ];
+
+    for (const endpoint of siteReportEndpoints) {
+      try {
+        const response = await apiService.makeAuthenticatedRequest(endpoint, {}, 4000); // Shorter timeout
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`Site report successful with endpoint: ${endpoint}`);
+          return data;
+        }
+      } catch (err) {
+        // Log the error but continue trying other endpoints - use console.log instead of warn to reduce noise
+        console.log(`Site report endpoint ${endpoint} failed:`, err instanceof Error ? err.message : 'Unknown error');
+      }
+    }
+    
+    // All endpoints failed, return null
+    console.log(`All site report endpoints failed for site ${siteId}`);
+    return null;
+  };
+
+  // Fetch APs report with fallback strategies
+  const fetchAPsReport = async () => {
+    const apReportEndpoints = [
+      '/v1/aps/report',           // Primary reports endpoint
+      '/v1/aps',                  // Fallback to basic APs data
+      '/v1/state/aps'             // Alternative state endpoint
+    ];
+
+    for (const endpoint of apReportEndpoints) {
+      try {
+        const response = await apiService.makeAuthenticatedRequest(endpoint, {}, 4000);
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`APs data successful with endpoint: ${endpoint}`);
+          return Array.isArray(data) ? data : data.aps || [];
+        }
+      } catch (err) {
+        console.log(`AP endpoint ${endpoint} failed:`, err instanceof Error ? err.message : 'Unknown error');
+      }
+    }
+    
+    console.log('All AP endpoints failed, returning empty array');
+    return [];
+  };
+
+  // Fetch AP report widgets with fallback strategies  
+  const fetchAPReportWidgets = async () => {
+    const apWidgetEndpoints = [
+      '/v1/aps/report/widgets',
+      '/v1/reports/widgets'       // General widgets as fallback
+    ];
+
+    for (const endpoint of apWidgetEndpoints) {
+      try {
+        const response = await apiService.makeAuthenticatedRequest(endpoint, {}, 3000);
+        if (response.ok) {
+          const data = await response.json();
+          console.log(`AP widgets successful with endpoint: ${endpoint}`);
+          return Array.isArray(data) ? data : data.widgets || [];
+        }
+      } catch (err) {
+        console.log(`AP widget endpoint ${endpoint} failed:`, err instanceof Error ? err.message : 'Unknown error');
+      }
+    }
+    
+    return [];
+  };
+
+  // Fetch general report widgets with fallback strategies
+  const fetchReportWidgets = async () => {
+    try {
+      const response = await apiService.makeAuthenticatedRequest('/v1/reports/widgets', {}, 3000);
+      if (response.ok) {
+        const data = await response.json();
+        console.log('General widgets successful');
+        return Array.isArray(data) ? data : data.widgets || [];
+      }
+    } catch (err) {
+      console.log('General widgets endpoint failed:', err instanceof Error ? err.message : 'Unknown error');
+    }
+    return [];
+  };
+
+  // Main data fetching function
   const fetchAnalyticsData = async () => {
     try {
       setError(null);
-      
-      // Fetch current state data to base historical trends on
-      const [apsResponse, sitesResponse, switchesResponse] = await Promise.allSettled([
-        apiService.makeAuthenticatedRequest('/v1/state/aps'),
-        apiService.makeAuthenticatedRequest('/v1/state/sites'),
-        apiService.makeAuthenticatedRequest('/v1/state/switches')
-      ]);
+      setRefreshing(true);
 
-      let aps: any[] = [];
-      let sites: any[] = [];
-      let switches: any[] = [];
+      // Fetch all sites data first
+      await fetchSites();
 
-      // Process responses
-      if (apsResponse.status === 'fulfilled' && apsResponse.value.ok) {
-        const apsData = await apsResponse.value.json();
-        aps = Array.isArray(apsData) ? apsData : apsData.aps || [];
-      }
+      if (selectedSite === 'all') {
+        // Fetch all sites analytics with graceful error handling
+        console.log('Fetching analytics data for all sites...');
+        const [sitesReportData, apsReportData, siteWidgets, apWidgets, generalWidgets] = await Promise.allSettled([
+          fetchSitesReport(),
+          fetchAPsReport(),
+          fetchSiteReportWidgets(),
+          fetchAPReportWidgets(),
+          fetchReportWidgets()
+        ]);
 
-      if (sitesResponse.status === 'fulfilled' && sitesResponse.value.ok) {
-        const sitesData = await sitesResponse.value.json();
-        sites = Array.isArray(sitesData) ? sitesData : sitesData.sites || [];
-      }
+        // Process sites report
+        if (sitesReportData.status === 'fulfilled' && sitesReportData.value) {
+          const sitesData = sitesReportData.value;
+          
+          // Create site reports from the data
+          const processedSiteReports: SiteReport[] = [];
+          
+          if (sitesData.sites && Array.isArray(sitesData.sites)) {
+            sitesData.sites.forEach((site: any) => {
+              processedSiteReports.push({
+                siteId: site.id || site.siteId,
+                siteName: site.name || site.siteName || `Site ${site.id}`,
+                widgets: site.widgets || [],
+                metrics: {
+                  apCount: site.apCount || site.accessPoints || 0,
+                  clientCount: site.clientCount || site.clients || 0,
+                  uptime: site.uptime || 0,
+                  throughput: site.throughput || 0,
+                  health: site.health || site.healthScore || 0
+                }
+              });
+            });
+          }
+          
+          setSiteReports(processedSiteReports);
+        }
 
-      if (switchesResponse.status === 'fulfilled' && switchesResponse.value.ok) {
-        const switchesData = await switchesResponse.value.json();
-        switches = Array.isArray(switchesData) ? switchesData : switchesData.switches || [];
-      }
+        // Process APs report
+        if (apsReportData.status === 'fulfilled' && apsReportData.value) {
+          const apsData = apsReportData.value;
+          const processedAPReports: APReport[] = apsData.map((ap: any) => ({
+            apId: ap.id || ap.apId || ap.serial,
+            name: ap.name || ap.displayName || `AP ${ap.serial}`,
+            serialNumber: ap.serial || ap.serialNumber,
+            siteId: ap.siteId || ap.site,
+            siteName: ap.siteName,
+            status: ap.status || 'unknown',
+            clientCount: ap.clientCount || ap.clients || 0,
+            health: ap.health || ap.healthScore || 0,
+            uptime: ap.uptime || 0,
+            throughput: ap.throughput || 0
+          }));
+          
+          setApReports(processedAPReports);
+        }
 
-      // Calculate current metrics
-      const onlineAPs = aps.filter(ap => ap.status === 'online' || ap.status === 'up').length;
-      const onlineSites = sites.filter(site => site.status === 'online' || site.status === 'up').length;
-      const onlineSwitches = switches.filter(sw => sw.status === 'online' || sw.status === 'up').length;
-      const totalClients = aps.reduce((total, ap) => total + (ap.clients || 0), 0);
-
-      const currentData = {
-        apHealth: aps.length > 0 ? Math.round((onlineAPs / aps.length) * 100) : 0,
-        clientCount: totalClients,
-        siteHealth: sites.length > 0 ? Math.round((onlineSites / sites.length) * 100) : 0,
-        switchHealth: switches.length > 0 ? Math.round((onlineSwitches / switches.length) * 100) : 0,
-        totalDevices: aps.length + switches.length
-      };
-
-      // Generate historical performance data
-      const historicalData = generateHistoricalData(currentData);
-      setPerformanceData(historicalData);
-
-      // Create device performance summary
-      const devicePerf: DevicePerformance[] = [];
-      
-      // Add AP performance
-      aps.forEach(ap => {
-        devicePerf.push({
-          name: ap.name || ap.serial || 'Unknown AP',
-          type: 'AP',
-          status: ap.status || 'unknown',
-          clients: ap.clients || 0,
-          uptime: ap.uptime || Math.random() * 100,
-          health: (ap.status === 'online' || ap.status === 'up') ? 85 + Math.random() * 15 : Math.random() * 50,
-          throughput: Math.random() * 100,
-          responseTime: Math.random() * 50
-        });
-      });
-
-      // Add Switch performance
-      switches.forEach(sw => {
-        devicePerf.push({
-          name: sw.name || sw.serial || 'Unknown Switch',
-          type: 'Switch',
-          status: sw.status || 'unknown',
-          clients: 0,
-          uptime: sw.uptime || Math.random() * 100,
-          health: (sw.status === 'online' || sw.status === 'up') ? 90 + Math.random() * 10 : Math.random() * 50,
-          responseTime: Math.random() * 20
-        });
-      });
-
-      // Add Site performance
-      sites.forEach(site => {
-        const siteAPs = aps.filter(ap => ap.site === site.id || ap.site === site.name);
-        const siteClients = siteAPs.reduce((total, ap) => total + (ap.clients || 0), 0);
+        // Process widgets
+        const allWidgets: ReportWidget[] = [];
         
-        devicePerf.push({
-          name: site.name || site.id || 'Unknown Site',
-          type: 'Site',
-          status: site.status || 'unknown',
-          clients: siteClients,
-          uptime: Math.random() * 100,
-          health: (site.status === 'online' || site.status === 'up') ? 88 + Math.random() * 12 : Math.random() * 60
+        [siteWidgets, apWidgets, generalWidgets].forEach((widgetResult) => {
+          if (widgetResult.status === 'fulfilled' && widgetResult.value) {
+            const widgets = Array.isArray(widgetResult.value) ? widgetResult.value : [];
+            widgets.forEach((widget: any) => {
+              allWidgets.push({
+                id: widget.id || widget.widgetId,
+                name: widget.name || widget.title,
+                type: widget.type || 'unknown',
+                data: widget.data || widget
+              });
+            });
+          }
         });
-      });
+        
+        setReportWidgets(allWidgets);
 
-      setDevicePerformance(devicePerf);
+      } else {
+        // Fetch specific site analytics
+        console.log(`Fetching analytics data for site: ${selectedSite}`);
+        const siteReport = await fetchSiteReport(selectedSite);
+        
+        if (siteReport) {
+          const site = sites.find(s => s.id === selectedSite);
+          const processedSiteReport: SiteReport = {
+            siteId: selectedSite,
+            siteName: site?.name || `Site ${selectedSite}`,
+            widgets: siteReport.widgets || [],
+            metrics: {
+              apCount: siteReport.apCount || siteReport.accessPoints || 0,
+              clientCount: siteReport.clientCount || siteReport.clients || 0,
+              uptime: siteReport.uptime || 0,
+              throughput: siteReport.throughput || 0,
+              health: siteReport.health || siteReport.healthScore || 0
+            }
+          };
+          
+          setSiteReports([processedSiteReport]);
+        } else {
+          // If site report fails, create a basic site report from available data
+          const site = sites.find(s => s.id === selectedSite);
+          const basicSiteReport: SiteReport = {
+            siteId: selectedSite,
+            siteName: site?.name || `Site ${selectedSite}`,
+            widgets: [],
+            metrics: {
+              apCount: 0,
+              clientCount: 0,
+              uptime: 0,
+              throughput: 0,
+              health: 0
+            }
+          };
+          setSiteReports([basicSiteReport]);
+        }
+
+        // Fetch APs for this specific site
+        const apsData = await fetchAPsReport();
+        const siteAPs = apsData.filter((ap: any) => 
+          (ap.siteId === selectedSite) || (ap.site === selectedSite) || (ap.siteName && sites.find(s => s.id === selectedSite)?.name === ap.siteName)
+        );
+        
+        const processedAPReports: APReport[] = siteAPs.map((ap: any) => ({
+          apId: ap.id || ap.apId || ap.serial,
+          name: ap.name || ap.displayName || `AP ${ap.serial}`,
+          serialNumber: ap.serial || ap.serialNumber,
+          siteId: ap.siteId || ap.site,
+          siteName: ap.siteName,
+          status: ap.status || 'unknown',
+          clientCount: ap.clientCount || ap.clients || 0,
+          health: ap.health || ap.healthScore || (ap.status === 'online' ? 85 : 0),
+          uptime: ap.uptime || (ap.status === 'online' ? 95 : 0),
+          throughput: ap.throughput || 0
+        }));
+        
+        setApReports(processedAPReports);
+        
+        // Update site metrics based on actual AP data if site report was empty
+        if (processedAPReports.length > 0 && (!siteReport || Object.keys(siteReport).length === 0)) {
+          const updatedSiteReport: SiteReport = {
+            siteId: selectedSite,
+            siteName: sites.find(s => s.id === selectedSite)?.name || `Site ${selectedSite}`,
+            widgets: [],
+            metrics: {
+              apCount: processedAPReports.length,
+              clientCount: processedAPReports.reduce((sum, ap) => sum + ap.clientCount, 0),
+              uptime: processedAPReports.length > 0 ? processedAPReports.reduce((sum, ap) => sum + ap.uptime, 0) / processedAPReports.length : 0,
+              throughput: processedAPReports.reduce((sum, ap) => sum + (ap.throughput || 0), 0),
+              health: processedAPReports.length > 0 ? processedAPReports.reduce((sum, ap) => sum + ap.health, 0) / processedAPReports.length : 0
+            }
+          };
+          setSiteReports([updatedSiteReport]);
+        }
+      }
+
       setLastUpdated(new Date());
+
+      // Show info message only if we truly have very limited data and it's the first load
+      const hasMinimalData = apReports.length === 0 && siteReports.length === 0 && sites.length === 0;
+      if (hasMinimalData && !lastUpdated) {
+        toast.info('Limited Analytics Data', {
+          description: 'Analytics endpoints are currently unavailable. Please check the API test tool or try refreshing.',
+          duration: 5000
+        });
+      }
 
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to fetch analytics data';
-      setError(errorMessage);
-      toast.error('Analytics Error', {
-        description: errorMessage
-      });
+      
+      // Don't show error toasts for suppressed analytics endpoints
+      if (errorMessage.includes('SUPPRESSED_ANALYTICS_ERROR')) {
+        console.log('Suppressed analytics error in PerformanceAnalytics component');
+        setError(null); // Don't set error state for suppressed errors
+      } else {
+        setError(errorMessage);
+        toast.error('Analytics Error', {
+          description: errorMessage
+        });
+      }
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
   useEffect(() => {
     fetchAnalyticsData();
-    
-    // Auto-refresh every 60 seconds
-    const interval = setInterval(fetchAnalyticsData, 60000);
-    return () => clearInterval(interval);
-  }, [selectedTimeRange]);
+  }, [selectedSite]);
 
   const handleRefresh = () => {
     setLoading(true);
@@ -236,17 +481,18 @@ export function PerformanceAnalytics() {
 
   const handleExport = () => {
     const dataToExport = {
-      performanceMetrics: performanceData,
-      devicePerformance: devicePerformance,
-      timestamp: new Date().toISOString(),
-      timeRange: selectedTimeRange
+      siteReports,
+      apReports,
+      reportWidgets,
+      selectedSite,
+      timestamp: new Date().toISOString()
     };
     
     const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `network-analytics-${selectedTimeRange}-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = `performance-analytics-${selectedSite}-${new Date().toISOString().split('T')[0]}.json`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -255,79 +501,47 @@ export function PerformanceAnalytics() {
     toast.success('Analytics data exported successfully');
   };
 
-  // Calculate trend indicators
-  const calculateTrend = (data: PerformanceMetrics[], key: keyof PerformanceMetrics) => {
-    if (data.length < 2) return { trend: 'stable', change: 0 };
-    
-    const recent = data.slice(-5).map(d => Number(d[key]));
-    const older = data.slice(-10, -5).map(d => Number(d[key]));
-    
-    const recentAvg = recent.reduce((a, b) => a + b, 0) / recent.length;
-    const olderAvg = older.reduce((a, b) => a + b, 0) / older.length;
-    
-    const change = ((recentAvg - olderAvg) / olderAvg) * 100;
-    
-    return {
-      trend: change > 5 ? 'up' : change < -5 ? 'down' : 'stable',
-      change: Math.abs(change)
-    };
-  };
+  // Calculate aggregate metrics for all sites
+  const getAggregateMetrics = () => {
+    if (selectedSite === 'all') {
+      const totalAPs = apReports.length;
+      const onlineAPs = apReports.filter(ap => ap.status === 'online' || ap.status === 'up').length;
+      const totalClients = apReports.reduce((sum, ap) => sum + ap.clientCount, 0);
+      const avgHealth = totalAPs > 0 ? apReports.reduce((sum, ap) => sum + ap.health, 0) / totalAPs : 0;
+      const avgUptime = totalAPs > 0 ? apReports.reduce((sum, ap) => sum + ap.uptime, 0) / totalAPs : 0;
 
-  const getMetricChart = () => {
-    switch (selectedMetric) {
-      case 'health':
-        return (
-          <ResponsiveContainer width="100%" height={300}>
-            <LineChart data={performanceData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="timestamp" />
-              <YAxis domain={[0, 100]} />
-              <Tooltip />
-              <Legend />
-              <Line type="monotone" dataKey="apHealth" stroke={CHART_COLORS[0]} strokeWidth={2} name="AP Health %" />
-              <Line type="monotone" dataKey="siteHealth" stroke={CHART_COLORS[1]} strokeWidth={2} name="Site Health %" />
-              <Line type="monotone" dataKey="switchHealth" stroke={CHART_COLORS[2]} strokeWidth={2} name="Switch Health %" />
-            </LineChart>
-          </ResponsiveContainer>
-        );
-      case 'clients':
-        return (
-          <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={performanceData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="timestamp" />
-              <YAxis />
-              <Tooltip />
-              <Area type="monotone" dataKey="clientCount" stroke={CHART_COLORS[3]} fill={CHART_COLORS[3]} fillOpacity={0.3} name="Client Count" />
-            </AreaChart>
-          </ResponsiveContainer>
-        );
-      case 'devices':
-        return (
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={performanceData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="timestamp" />
-              <YAxis />
-              <Tooltip />
-              <Bar dataKey="totalDevices" fill={CHART_COLORS[4]} name="Total Devices" />
-            </BarChart>
-          </ResponsiveContainer>
-        );
-      default:
-        return null;
+      return {
+        totalSites: siteReports.length,
+        totalAPs,
+        onlineAPs,
+        totalClients,
+        avgHealth,
+        avgUptime,
+        apHealthPercent: totalAPs > 0 ? (onlineAPs / totalAPs) * 100 : 0
+      };
+    } else {
+      const siteAPs = apReports;
+      const totalAPs = siteAPs.length;
+      const onlineAPs = siteAPs.filter(ap => ap.status === 'online' || ap.status === 'up').length;
+      const totalClients = siteAPs.reduce((sum, ap) => sum + ap.clientCount, 0);
+      const avgHealth = totalAPs > 0 ? siteAPs.reduce((sum, ap) => sum + ap.health, 0) / totalAPs : 0;
+      const avgUptime = totalAPs > 0 ? siteAPs.reduce((sum, ap) => sum + ap.uptime, 0) / totalAPs : 0;
+
+      return {
+        totalSites: 1,
+        totalAPs,
+        onlineAPs,
+        totalClients,
+        avgHealth,
+        avgUptime,
+        apHealthPercent: totalAPs > 0 ? (onlineAPs / totalAPs) * 100 : 0
+      };
     }
   };
 
-  if (error && performanceData.length === 0) {
+  if (error && siteReports.length === 0) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1>Performance Analytics</h1>
-          <p className="text-muted-foreground">
-            Network performance insights and analytics
-          </p>
-        </div>
         
         <Alert variant="destructive">
           <AlertTriangle className="h-4 w-4" />
@@ -344,199 +558,371 @@ export function PerformanceAnalytics() {
     );
   }
 
+  const metrics = getAggregateMetrics();
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <div>
-          <h1>Performance Analytics</h1>
-          <p className="text-muted-foreground">
-            Network performance insights and analytics
-          </p>
-        </div>
-        
+      <div className="flex justify-end items-center">
         <div className="flex items-center space-x-4">
           {lastUpdated && (
             <span className="text-sm text-muted-foreground flex items-center">
               <Clock className="h-4 w-4 mr-1" />
-              Last updated: {lastUpdated.toLocaleTimeString()}
+              Updated: {lastUpdated.toLocaleTimeString()}
             </span>
           )}
           
           <Button onClick={handleExport} variant="outline" size="sm">
             <Download className="h-4 w-4 mr-2" />
-            Export Data
+            Export
           </Button>
           
-          <Button 
-            onClick={handleRefresh} 
-            variant="outline" 
-            size="sm"
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+          <Button onClick={handleRefresh} variant="outline" size="sm" disabled={refreshing}>
+            <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         </div>
       </div>
 
-      {/* Key Performance Indicators */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        {performanceData.length > 0 && (
-          <>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Average Health</CardTitle>
-                <Activity className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {loading ? <Skeleton className="h-8 w-16" /> : (
-                  <>
-                    <div className="flex items-center space-x-2">
-                      <div className="text-2xl font-bold">
-                        {Math.round((performanceData[performanceData.length - 1]?.apHealth + 
-                                   performanceData[performanceData.length - 1]?.siteHealth + 
-                                   performanceData[performanceData.length - 1]?.switchHealth) / 3)}%
-                      </div>
-                      {(() => {
-                        const trend = calculateTrend(performanceData, 'apHealth');
-                        return trend.trend === 'up' ? 
-                          <TrendingUp className="h-4 w-4 text-green-500" /> : 
-                          trend.trend === 'down' ? 
-                          <TrendingDown className="h-4 w-4 text-red-500" /> : null;
-                      })()}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Overall system health
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Peak Clients</CardTitle>
-                <Users className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {loading ? <Skeleton className="h-8 w-16" /> : (
-                  <>
-                    <div className="flex items-center space-x-2">
-                      <div className="text-2xl font-bold">
-                        {Math.max(...performanceData.map(d => d.clientCount))}
-                      </div>
-                      {(() => {
-                        const trend = calculateTrend(performanceData, 'clientCount');
-                        return trend.trend === 'up' ? 
-                          <TrendingUp className="h-4 w-4 text-green-500" /> : 
-                          trend.trend === 'down' ? 
-                          <TrendingDown className="h-4 w-4 text-red-500" /> : null;
-                      })()}
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      Maximum concurrent users
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Uptime</CardTitle>
-                <CheckCircle className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {loading ? <Skeleton className="h-8 w-16" /> : (
-                  <>
-                    <div className="text-2xl font-bold">99.5%</div>
-                    <p className="text-xs text-muted-foreground">
-                      Network availability
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium">Avg Response</CardTitle>
-                <Zap className="h-4 w-4 text-muted-foreground" />
-              </CardHeader>
-              <CardContent>
-                {loading ? <Skeleton className="h-8 w-16" /> : (
-                  <>
-                    <div className="text-2xl font-bold">12ms</div>
-                    <p className="text-xs text-muted-foreground">
-                      Network latency
-                    </p>
-                  </>
-                )}
-              </CardContent>
-            </Card>
-          </>
-        )}
-      </div>
-
-      {/* Performance Charts */}
+      {/* Site Selector */}
       <Card>
         <CardHeader>
-          <div className="flex justify-between items-center">
+          <div className="flex items-center justify-between">
             <div>
               <CardTitle className="flex items-center">
-                <BarChart3 className="h-5 w-5 mr-2" />
-                Performance Trends
+                <Filter className="h-5 w-5 mr-2" />
+                Analytics Scope
               </CardTitle>
-              <CardDescription>Historical performance metrics over time</CardDescription>
+              <CardDescription>Select sites to analyze performance data</CardDescription>
             </div>
             
-            <div className="flex items-center space-x-4">
-              <Select value={selectedMetric} onValueChange={setSelectedMetric}>
-                <SelectTrigger className="w-40">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="health">Health Metrics</SelectItem>
-                  <SelectItem value="clients">Client Activity</SelectItem>
-                  <SelectItem value="devices">Device Count</SelectItem>
-                </SelectContent>
-              </Select>
-              
-              <Select value={selectedTimeRange} onValueChange={setSelectedTimeRange}>
-                <SelectTrigger className="w-32">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="1h">Last Hour</SelectItem>
-                  <SelectItem value="24h">Last 24h</SelectItem>
-                  <SelectItem value="30d">Last 30d</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            <Select value={selectedSite} onValueChange={setSelectedSite}>
+              <SelectTrigger className="w-64">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Sites Overview</SelectItem>
+                {sites.map(site => (
+                  <SelectItem key={site.id} value={site.id}>
+                    {site.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </CardHeader>
-        <CardContent>
-          {loading ? (
-            <Skeleton className="h-[300px] w-full" />
-          ) : (
-            getMetricChart()
-          )}
-        </CardContent>
       </Card>
 
-      {/* Device Performance Table */}
-      <Tabs defaultValue="devices" className="space-y-4">
+      {/* Key Performance Indicators */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">
+              {selectedSite === 'all' ? 'Total Sites' : 'Site Status'}
+            </CardTitle>
+            <MapPin className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : (
+              <>
+                <div className="text-2xl font-bold">{metrics.totalSites}</div>
+                <p className="text-xs text-muted-foreground">
+                  {selectedSite === 'all' ? 'Active sites' : 'Selected site'}
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Access Points</CardTitle>
+            <Wifi className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : (
+              <>
+                <div className="flex items-center space-x-2">
+                  <div className="text-2xl font-bold">{metrics.onlineAPs}/{metrics.totalAPs}</div>
+                  <Badge variant={metrics.apHealthPercent > 80 ? 'default' : 'destructive'}>
+                    {Math.round(metrics.apHealthPercent)}%
+                  </Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Online access points
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Connected Clients</CardTitle>
+            <Users className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : (
+              <>
+                <div className="text-2xl font-bold">{metrics.totalClients}</div>
+                <p className="text-xs text-muted-foreground">
+                  Active connections
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-sm font-medium">Avg Health</CardTitle>
+            <Activity className="h-4 w-4 text-muted-foreground" />
+          </CardHeader>
+          <CardContent>
+            {loading ? <Skeleton className="h-8 w-16" /> : (
+              <>
+                <div className="flex items-center space-x-2">
+                  <div className="text-2xl font-bold">{Math.round(metrics.avgHealth)}%</div>
+                  {metrics.avgHealth > 80 ? 
+                    <TrendingUp className="h-4 w-4 text-green-500" /> : 
+                    <TrendingDown className="h-4 w-4 text-red-500" />
+                  }
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Network health score
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Performance Details */}
+      <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="devices">Device Performance</TabsTrigger>
-          <TabsTrigger value="top-performers">Top Performers</TabsTrigger>
-          <TabsTrigger value="issues">Performance Issues</TabsTrigger>
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="sites">Sites Performance</TabsTrigger>
+          <TabsTrigger value="access-points">Access Points</TabsTrigger>
+          <TabsTrigger value="widgets">Report Widgets</TabsTrigger>
         </TabsList>
         
-        <TabsContent value="devices" className="space-y-4">
+        <TabsContent value="overview" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Health Distribution Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Health Distribution</CardTitle>
+                <CardDescription>Access point health status breakdown</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-[300px] w-full" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Excellent (90-100%)', value: apReports.filter(ap => ap.health >= 90).length, fill: CHART_COLORS[0] },
+                          { name: 'Good (80-89%)', value: apReports.filter(ap => ap.health >= 80 && ap.health < 90).length, fill: CHART_COLORS[1] },
+                          { name: 'Fair (70-79%)', value: apReports.filter(ap => ap.health >= 70 && ap.health < 80).length, fill: CHART_COLORS[2] },
+                          { name: 'Poor (<70%)', value: apReports.filter(ap => ap.health < 70).length, fill: CHART_COLORS[3] }
+                        ]}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        outerRadius={80}
+                        dataKey="value"
+                        label={({ cx, cy, midAngle, outerRadius, name, percent }) => {
+                          const RADIAN = Math.PI / 180;
+                          const radius = outerRadius * 1.2;
+                          const x = cx + radius * Math.cos(-midAngle * RADIAN);
+                          const y = cy + radius * Math.sin(-midAngle * RADIAN);
+                          return (
+                            <text
+                              x={x}
+                              y={y}
+                              className="fill-foreground text-xs"
+                              textAnchor={x > cx ? 'start' : 'end'}
+                              dominantBaseline="central"
+                            >
+                              {name}: {(percent * 100).toFixed(0)}%
+                            </text>
+                          );
+                        }}
+                      >
+                      </Pie>
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'hsl(var(--background))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '6px',
+                          color: 'hsl(var(--foreground))'
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Client Distribution Chart */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Client Distribution</CardTitle>
+                <CardDescription>Connected clients across access points</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {loading ? (
+                  <Skeleton className="h-[300px] w-full" />
+                ) : (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={apReports.slice(0, 10)}>
+                      <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                      <XAxis dataKey="name" tick={{ fill: 'hsl(var(--foreground))' }} />
+                      <YAxis tick={{ fill: 'hsl(var(--foreground))' }} />
+                      <Tooltip
+                        contentStyle={{
+                          backgroundColor: 'hsl(var(--background))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: '6px',
+                          color: 'hsl(var(--foreground))'
+                        }}
+                      />
+                      <Bar dataKey="clientCount" fill={CHART_COLORS[1]} name="Clients" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+        
+        <TabsContent value="sites" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Device Performance Details</CardTitle>
-              <CardDescription>Individual device metrics and health status</CardDescription>
+              <CardTitle>Sites Performance</CardTitle>
+              <CardDescription>Performance metrics for all sites</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="space-y-3">
+                  {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-16 w-full" />)}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {siteReports.map((site, index) => (
+                    <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <MapPin className="h-5 w-5 text-muted-foreground" />
+                        <div>
+                          <span className="font-medium">{site.siteName}</span>
+                          <div className="text-sm text-muted-foreground">Site ID: {site.siteId}</div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center space-x-6 text-sm">
+                        <div className="text-center">
+                          <div className="font-medium">{site.metrics.apCount || 0}</div>
+                          <div className="text-muted-foreground">APs</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium">{site.metrics.clientCount || 0}</div>
+                          <div className="text-muted-foreground">Clients</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium">{Math.round(site.metrics.health || 0)}%</div>
+                          <div className="text-muted-foreground">Health</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium">{Math.round(site.metrics.uptime || 0)}%</div>
+                          <div className="text-muted-foreground">Uptime</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {siteReports.length === 0 && (
+                    <div className="text-center py-8">
+                      <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                      <p className="text-muted-foreground">No site reports available</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        <TabsContent value="access-points" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Access Points Performance</CardTitle>
+              <CardDescription>Detailed AP metrics and status</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loading ? (
+                <div className="space-y-3">
+                  {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-16 w-full" />)}
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {apReports.map((ap, index) => (
+                    <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
+                      <div className="flex items-center space-x-4">
+                        <Wifi className="h-5 w-5 text-muted-foreground" />
+                        <div>
+                          <span className="font-medium">{ap.name}</span>
+                          <div className="text-sm text-muted-foreground">
+                            {ap.serialNumber} {ap.siteName && `• ${ap.siteName}`}
+                          </div>
+                        </div>
+                        <Badge variant={ap.status === 'online' ? 'default' : 'destructive'}>
+                          {ap.status}
+                        </Badge>
+                      </div>
+                      
+                      <div className="flex items-center space-x-6 text-sm">
+                        <div className="text-center">
+                          <div className="font-medium">{ap.clientCount}</div>
+                          <div className="text-muted-foreground">Clients</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium">{Math.round(ap.health)}%</div>
+                          <div className="text-muted-foreground">Health</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium">{Math.round(ap.uptime)}%</div>
+                          <div className="text-muted-foreground">Uptime</div>
+                        </div>
+                        <div className="text-center">
+                          <div className="font-medium">
+                            {ap.throughput >= 1000
+                              ? `${(ap.throughput / 1000).toFixed(2)} GB/s`
+                              : `${Math.round(ap.throughput)} MB/s`
+                            }
+                          </div>
+                          <div className="text-muted-foreground">Throughput</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  
+                  {apReports.length === 0 && (
+                    <div className="text-center py-8">
+                      <Wifi className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                      <p className="text-muted-foreground">No access points data available</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        
+        <TabsContent value="widgets" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Report Widgets</CardTitle>
+              <CardDescription>Available reporting widgets and data sources</CardDescription>
             </CardHeader>
             <CardContent>
               {loading ? (
@@ -544,114 +930,31 @@ export function PerformanceAnalytics() {
                   {[1,2,3,4,5].map(i => <Skeleton key={i} className="h-12 w-full" />)}
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {devicePerformance.slice(0, 10).map((device, index) => (
-                    <div key={index} className="flex items-center justify-between p-4 border rounded-lg">
-                      <div className="flex items-center space-x-4">
-                        <div className="flex items-center space-x-2">
-                          {device.type === 'AP' && <Wifi className="h-4 w-4" />}
-                          {device.type === 'Switch' && <Server className="h-4 w-4" />}
-                          {device.type === 'Site' && <Activity className="h-4 w-4" />}
-                          <span className="font-medium">{device.name}</span>
-                        </div>
-                        <Badge variant="outline">{device.type}</Badge>
-                        <Badge variant={device.status === 'online' ? 'default' : 'destructive'}>
-                          {device.status}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {reportWidgets.map((widget, index) => (
+                    <Card key={index}>
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm">{widget.name}</CardTitle>
+                        <Badge variant="outline" className="w-fit text-xs">
+                          {widget.type}
                         </Badge>
-                      </div>
-                      
-                      <div className="flex items-center space-x-4 text-sm">
-                        <div className="text-center">
-                          <div className="font-medium">{Math.round(device.health)}%</div>
-                          <div className="text-muted-foreground">Health</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="font-medium">{device.clients}</div>
-                          <div className="text-muted-foreground">Clients</div>
-                        </div>
-                        <div className="text-center">
-                          <div className="font-medium">{Math.round(device.uptime)}%</div>
-                          <div className="text-muted-foreground">Uptime</div>
-                        </div>
-                        {device.responseTime && (
-                          <div className="text-center">
-                            <div className="font-medium">{Math.round(device.responseTime)}ms</div>
-                            <div className="text-muted-foreground">Response</div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                      </CardHeader>
+                      <CardContent>
+                        <p className="text-xs text-muted-foreground">
+                          Widget ID: {widget.id}
+                        </p>
+                      </CardContent>
+                    </Card>
                   ))}
+                  
+                  {reportWidgets.length === 0 && (
+                    <div className="col-span-full text-center py-8">
+                      <BarChart3 className="h-12 w-12 text-muted-foreground mx-auto mb-2" />
+                      <p className="text-muted-foreground">No report widgets available</p>
+                    </div>
+                  )}
                 </div>
               )}
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="top-performers" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Top Performing Devices</CardTitle>
-              <CardDescription>Devices with the highest performance metrics</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {devicePerformance
-                  .filter(d => d.health > 90)
-                  .sort((a, b) => b.health - a.health)
-                  .slice(0, 5)
-                  .map((device, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <CheckCircle className="h-5 w-5 text-green-500" />
-                        <div>
-                          <span className="font-medium">{device.name}</span>
-                          <div className="text-sm text-muted-foreground">{device.type}</div>
-                        </div>
-                      </div>
-                      <Badge variant="default" className="bg-green-500">
-                        {Math.round(device.health)}% Health
-                      </Badge>
-                    </div>
-                  ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-        
-        <TabsContent value="issues" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Performance Issues</CardTitle>
-              <CardDescription>Devices requiring attention or optimization</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {devicePerformance
-                  .filter(d => d.health < 70 || d.status !== 'online')
-                  .sort((a, b) => a.health - b.health)
-                  .slice(0, 5)
-                  .map((device, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <AlertTriangle className="h-5 w-5 text-red-500" />
-                        <div>
-                          <span className="font-medium">{device.name}</span>
-                          <div className="text-sm text-muted-foreground">{device.type} - {device.status}</div>
-                        </div>
-                      </div>
-                      <Badge variant="destructive">
-                        {Math.round(device.health)}% Health
-                      </Badge>
-                    </div>
-                  ))}
-                {devicePerformance.filter(d => d.health < 70 || d.status !== 'online').length === 0 && (
-                  <div className="text-center py-8">
-                    <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-2" />
-                    <p className="text-muted-foreground">No performance issues detected</p>
-                  </div>
-                )}
-              </div>
             </CardContent>
           </Card>
         </TabsContent>

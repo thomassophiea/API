@@ -1,26 +1,33 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { DetailSlideOut } from './DetailSlideOut';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { ScrollArea } from './ui/scroll-area';
 import { Checkbox } from './ui/checkbox';
-import { AlertCircle, Users, Search, RefreshCw, Filter, Eye, Wifi, Activity, Timer, Signal, Download, Upload, Shield, Router, MapPin, User, Clock, Star, Trash2, UserX, RotateCcw, UserPlus, UserMinus, ShieldCheck, ShieldX, Settings } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
+import { AlertCircle, Users, Search, RefreshCw, Filter, Wifi, Activity, Timer, Signal, Download, Upload, Shield, Router, MapPin, User, Clock, Star, Trash2, UserX, RotateCcw, UserPlus, UserMinus, ShieldCheck, ShieldX, Info, Radio, WifiOff, SignalHigh, SignalMedium, SignalLow, SignalZero, Cable, Shuffle, Columns, Route, ArrowLeft, FileDown, UserMinus2 } from 'lucide-react';
+import { Tooltip, TooltipTrigger, TooltipContent } from './ui/tooltip';
 import { Alert, AlertDescription } from './ui/alert';
 import { Skeleton } from './ui/skeleton';
-import { apiService, Station } from '../services/api';
+import { apiService, Station, type StationEvent, type APEvent, type RRMEvent } from '../services/api';
+import { RoamingTrail } from './RoamingTrail';
 import { identifyClient, lookupVendor, suggestDeviceType } from '../services/ouiLookup';
 import { toast } from 'sonner';
+import { useTableCustomization } from '@/hooks/useTableCustomization';
+import { ColumnCustomizationDialog } from './ui/ColumnCustomizationDialog';
+import { CLIENTS_TABLE_COLUMNS } from '@/config/clientsTableColumns';
+import { SaveToWorkspace } from './SaveToWorkspace';
 
 interface ConnectedClientsProps {
   onShowDetail?: (macAddress: string, hostName?: string) => void;
 }
 
-export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
+function ConnectedClientsComponent({ onShowDetail }: ConnectedClientsProps) {
   const [stations, setStations] = useState<Station[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string>('');
@@ -37,19 +44,46 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
   const [actionType, setActionType] = useState<string>('');
   const [groupId, setGroupId] = useState<string>('');
   const [siteId, setSiteId] = useState<string>('');
-  const [stationEvents, setStationEvents] = useState<any[]>([]);
+  const [stationEvents, setStationEvents] = useState<StationEvent[]>([]);
+  const [apEvents, setApEvents] = useState<APEvent[]>([]);
+  const [rrmEvents, setRrmEvents] = useState<RRMEvent[]>([]);
   const [isLoadingEvents, setIsLoadingEvents] = useState(false);
+  const [eventTypeFilter, setEventTypeFilter] = useState<string>('all');
+  const [stationTrafficData, setStationTrafficData] = useState<Map<string, any>>(new Map());
+  const [isLoadingTraffic, setIsLoadingTraffic] = useState(false);
+  const [showRoamingTrail, setShowRoamingTrail] = useState(false);
+  const [isGdprDeleteDialogOpen, setIsGdprDeleteDialogOpen] = useState(false);
+  const [isDeletingClientData, setIsDeletingClientData] = useState(false);
+  const [sortColumn, setSortColumn] = useState<string | null>(null);
+  const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc');
+
+  // Table customization
+  const customization = useTableCustomization({
+    tableId: 'connected-clients',
+    columns: CLIENTS_TABLE_COLUMNS,
+    enableViews: true,
+    enablePersistence: true,
+    userId: localStorage.getItem('user_email') || 'default-user'
+  });
 
   useEffect(() => {
     loadStations();
   }, []);
 
   const loadStations = async () => {
+    // Check authentication before loading
+    if (!apiService.isAuthenticated()) {
+      console.warn('[ConnectedClients] User not authenticated, skipping data load');
+      setIsLoading(false);
+      return;
+    }
+    
     setIsLoading(true);
     setError('');
     
     try {
-      const stationsData = await apiService.getAllStations();
+      // Use the new correlation method to get stations with proper site information
+      const stationsData = await apiService.getStationsWithSiteCorrelation();
       setStations(Array.isArray(stationsData) ? stationsData : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load connected clients');
@@ -59,28 +93,31 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
     }
   };
 
-  const getStatusBadgeVariant = (status: string) => {
+  const getStatusBadgeClass = (status: string) => {
     switch (status?.toLowerCase()) {
       case 'connected':
       case 'associated':
       case 'active':
-        return 'default';
+        return 'bg-green-500/15 text-green-500 border-green-500/30';
       case 'disconnected':
       case 'inactive':
-        return 'destructive';
+        return 'bg-red-500/15 text-red-500 border-red-500/30';
       case 'idle':
       case 'low':
-        return 'secondary';
+        return 'bg-gray-500/15 text-gray-400 border-gray-500/30';
       default:
-        return 'outline';
+        return 'bg-gray-500/15 text-gray-400 border-gray-500/30';
     }
   };
+
+  // Log to verify new version is deployed
+  console.log('[ConnectedClients] Column customization enabled - v2024-12-23');
 
   const formatBytes = (bytes: number) => {
     if (!bytes || bytes === 0) return '0 B';
     const k = 1024;
-    const sizes = ['B', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB', 'PB'];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   };
 
@@ -101,8 +138,23 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
     }
   };
 
+  const getBandFromRadioId = (radioId: number | undefined) => {
+    switch (radioId) {
+      case 1:
+        return { band: '2.4 GHz', color: 'text-blue-500', bgColor: 'bg-blue-500/10' };
+      case 2:
+        return { band: '5 GHz', color: 'text-green-500', bgColor: 'bg-green-500/10' };
+      case 3:
+        return { band: '6 GHz', color: 'text-purple-500', bgColor: 'bg-purple-500/10' };
+      case 20:
+        return { band: 'Eth1 Wired', color: 'text-orange-500', bgColor: 'bg-orange-500/10' };
+      default:
+        return { band: 'Unknown', color: 'text-muted-foreground', bgColor: 'bg-muted/10' };
+    }
+  };
+
   const filteredStations = stations.filter((station) => {
-    const matchesSearch = !searchTerm || 
+    const matchesSearch = !searchTerm ||
       station.macAddress?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       station.ipAddress?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       station.hostName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -112,13 +164,102 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
       station.siteName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       station.network?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       station.manufacturer?.toLowerCase().includes(searchTerm.toLowerCase());
-    
+
     const matchesStatus = statusFilter === 'all' || station.status?.toLowerCase() === statusFilter.toLowerCase();
     const matchesAP = apFilter === 'all' || station.apSerial === apFilter || station.apName === apFilter;
     const matchesSite = siteFilter === 'all' || station.siteName === siteFilter;
     const matchesDeviceType = deviceTypeFilter === 'all' || station.deviceType === deviceTypeFilter;
-    
+
     return matchesSearch && matchesStatus && matchesAP && matchesSite && matchesDeviceType;
+  });
+
+  // Helper function to get sortable value for a column
+  const getSortValue = (station: Station, columnKey: string): string | number => {
+    const stationAny = station as any;
+    switch (columnKey) {
+      case 'macAddress':
+        return (station.macAddress || '').toLowerCase();
+      case 'hostName':
+        return (station.hostName || '').toLowerCase();
+      case 'ipAddress':
+        return station.ipAddress || '';
+      case 'status':
+        return (station.status || '').toLowerCase();
+      case 'apName':
+        return (station.apName || '').toLowerCase();
+      case 'apSerial':
+        return (station.apSerial || '').toLowerCase();
+      case 'siteName':
+        return (station.siteName || '').toLowerCase();
+      case 'network':
+        return (station.network || '').toLowerCase();
+      case 'ssid':
+        return (stationAny.ssid || station.network || '').toLowerCase();
+      case 'rssi':
+      case 'signalStrength':
+        return stationAny.rssi || stationAny.signalStrength || stationAny.snr || 0;
+      case 'snr':
+        return stationAny.snr || 0;
+      case 'channel':
+        return stationAny.channel || 0;
+      case 'band':
+        return (stationAny.band || '').toLowerCase();
+      case 'rxBytes':
+      case 'download':
+        return station.rxBytes || stationAny.clientBandwidthBytes || 0;
+      case 'txBytes':
+      case 'upload':
+        return station.txBytes || stationAny.outBytes || 0;
+      case 'connectedTime':
+      case 'connectionTime':
+        return stationAny.connectedTime || stationAny.connectionTime || stationAny.assocTime || 0;
+      case 'username':
+        return (station.username || '').toLowerCase();
+      case 'role':
+        return (stationAny.role || '').toLowerCase();
+      case 'vlan':
+        return stationAny.vlan || 0;
+      case 'manufacturer':
+      case 'vendor':
+        return (station.manufacturer || '').toLowerCase();
+      case 'deviceType':
+        return (station.deviceType || '').toLowerCase();
+      case 'os':
+        return (stationAny.os || '').toLowerCase();
+      case 'protocol':
+        return (stationAny.protocol || '').toLowerCase();
+      case 'authType':
+        return (stationAny.authType || '').toLowerCase();
+      default:
+        return stationAny[columnKey] || '';
+    }
+  };
+
+  // Handle column header click for sorting
+  const handleSort = (columnKey: string) => {
+    if (sortColumn === columnKey) {
+      setSortDirection(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(columnKey);
+      setSortDirection('asc');
+    }
+  };
+
+  // Sort the filtered stations
+  const sortedStations = [...filteredStations].sort((a, b) => {
+    if (!sortColumn) return 0;
+
+    const aValue = getSortValue(a, sortColumn);
+    const bValue = getSortValue(b, sortColumn);
+
+    let comparison = 0;
+    if (typeof aValue === 'number' && typeof bValue === 'number') {
+      comparison = aValue - bValue;
+    } else {
+      comparison = String(aValue).localeCompare(String(bValue));
+    }
+
+    return sortDirection === 'asc' ? comparison : -comparison;
   });
 
   const getUniqueStatuses = () => {
@@ -182,7 +323,7 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      const allMacAddresses = new Set(filteredStations.map(station => station.macAddress));
+      const allMacAddresses = new Set(sortedStations.map(station => station.macAddress));
       setSelectedStations(allMacAddresses);
     } else {
       setSelectedStations(new Set());
@@ -191,19 +332,29 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
 
   const loadStationEvents = async (macAddress: string) => {
     if (!macAddress) return;
-    
+
+    console.log(`[ConnectedClients] Loading station events with correlation for client:`, macAddress);
     setIsLoadingEvents(true);
+    setEventTypeFilter('all'); // Reset filter when loading new events
     try {
-      const events = await apiService.getStationEvents(macAddress);
-      setStationEvents(Array.isArray(events) ? events : []);
+      // Fetch correlated events (station + AP + RRM)
+      const correlatedEvents = await apiService.fetchStationEventsWithCorrelation(macAddress, '24H');
+
+      console.log(`[ConnectedClients] Received correlated events:`, {
+        station: correlatedEvents.stationEvents.length,
+        ap: correlatedEvents.apEvents.length,
+        rrm: correlatedEvents.smartRfEvents.length
+      });
+
+      setStationEvents(correlatedEvents.stationEvents);
+      setApEvents(correlatedEvents.apEvents);
+      setRrmEvents(correlatedEvents.smartRfEvents);
     } catch (err) {
-      // API service now handles 422 gracefully, but catch any other errors
-      console.warn('Error loading station events:', err);
+      console.error('[ConnectedClients] Failed to load station events:', err);
       setStationEvents([]);
-      // Only show toast for unexpected errors, not 422 which is handled gracefully
-      if (err instanceof Error && !err.message.includes('422')) {
-        toast.error('Failed to load station events');
-      }
+      setApEvents([]);
+      setRrmEvents([]);
+      toast.error('Failed to load station events');
     } finally {
       setIsLoadingEvents(false);
     }
@@ -300,13 +451,126 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
     }
   };
 
+  // GDPR: Download client data as JSON (supports multiple clients)
+  const handleDownloadClientData = async (stationsToExport: Station[]) => {
+    try {
+      const exportData = {
+        exportDate: new Date().toISOString(),
+        gdprDataExport: true,
+        exportType: stationsToExport.length === 1 ? 'single_client' : 'bulk_export',
+        totalClients: stationsToExport.length,
+        clients: stationsToExport.map(station => ({
+          clientIdentifier: station.macAddress,
+          basicInformation: {
+            macAddress: station.macAddress,
+            ipAddress: station.ipAddress,
+            ipv6Address: station.ipv6Address,
+            hostname: station.hostName,
+            username: station.username,
+            deviceType: station.deviceType,
+            manufacturer: station.manufacturer,
+            osType: station.osType,
+          },
+          networkInformation: {
+            siteName: station.siteName,
+            siteId: station.siteId,
+            accessPoint: station.apName,
+            apSerial: station.apSerial,
+            network: station.network,
+            ssid: station.ssid,
+            role: station.role,
+            vlan: station.vlan,
+            radioId: station.radioId,
+            channel: station.channel,
+          },
+          connectionStatus: {
+            status: station.status,
+            lastSeen: station.lastSeen,
+            connectionTime: station.connectionTime,
+            sessionDuration: station.sessionDuration,
+          },
+          trafficStatistics: {
+            rxBytes: station.rxBytes,
+            txBytes: station.txBytes,
+            inBytes: station.inBytes,
+            outBytes: station.outBytes,
+            clientBandwidthBytes: station.clientBandwidthBytes,
+          },
+          signalQuality: {
+            rssi: station.rssi,
+            snr: station.snr,
+            txRate: station.txRate,
+            rxRate: station.rxRate,
+            siteRating: station.siteRating,
+          },
+        })),
+      };
+
+      // Create and download JSON file
+      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      const filename = stationsToExport.length === 1
+        ? `client-data-${stationsToExport[0].macAddress.replace(/:/g, '-')}-${new Date().toISOString().split('T')[0]}.json`
+        : `client-data-export-${stationsToExport.length}-clients-${new Date().toISOString().split('T')[0]}.json`;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      toast.success(`Exported data for ${stationsToExport.length} client${stationsToExport.length > 1 ? 's' : ''}`);
+    } catch (error) {
+      console.error('[ConnectedClients] Error exporting client data:', error);
+      toast.error('Failed to export client data');
+    }
+  };
+
+  // GDPR: Download selected clients data
+  const handleDownloadSelectedClients = () => {
+    const selectedStationsList = stations.filter(s => selectedStations.has(s.macAddress));
+    if (selectedStationsList.length === 0) {
+      toast.error('No clients selected');
+      return;
+    }
+    handleDownloadClientData(selectedStationsList);
+  };
+
+  // GDPR: Delete all client data (supports multiple clients)
+  const handleDeleteClientData = async (macAddresses: string[]) => {
+    setIsDeletingClientData(true);
+    try {
+      // Call the API to delete the station/client data
+      await apiService.bulkDeleteStations(macAddresses);
+
+      toast.success(`Deleted data for ${macAddresses.length} client${macAddresses.length > 1 ? 's' : ''}`);
+      setIsGdprDeleteDialogOpen(false);
+      setSelectedStations(new Set());
+
+      // Refresh the stations list
+      await loadStations();
+    } catch (error) {
+      console.error('[ConnectedClients] Error deleting client data:', error);
+      toast.error('Failed to delete client data');
+    } finally {
+      setIsDeletingClientData(false);
+    }
+  };
+
+  // GDPR: Delete selected clients data
+  const handleDeleteSelectedClients = () => {
+    if (selectedStations.size === 0) {
+      toast.error('No clients selected');
+      return;
+    }
+    setIsGdprDeleteDialogOpen(true);
+  };
+
+  // Helper function to render column content based on column key
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1>Connected Clients</h1>
-          <p className="text-muted-foreground">Monitor connected devices and network usage</p>
-        </div>
         
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {[1, 2, 3, 4].map((i) => (
@@ -339,15 +603,25 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      {/* Header */}
+      <div className="flex justify-between items-center">
         <div>
-          <h1>Connected Clients</h1>
-          <p className="text-muted-foreground">Monitor connected devices and network usage</p>
+          <h1 className="text-2xl font-bold">Connected Clients</h1>
+          <p className="text-muted-foreground">
+            Monitor and manage connected wireless client devices across your network
+          </p>
         </div>
-        <Button onClick={loadStations} variant="outline">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
+        <div className="flex items-center space-x-2">
+          <Button onClick={loadStations} variant="outline" size="sm">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Refresh
+          </Button>
+          <ColumnCustomizationDialog
+            customization={customization}
+            triggerLabel="Customize Columns"
+            showTriggerIcon={true}
+          />
+        </div>
       </div>
 
       {error && (
@@ -358,7 +632,7 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
+        <Card className="surface-1dp">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Clients</CardTitle>
             <Users className="h-4 w-4 text-muted-foreground" />
@@ -371,7 +645,7 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-1dp">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Active Connections</CardTitle>
             <Wifi className="h-4 w-4 text-green-500" />
@@ -384,7 +658,7 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-1dp">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Sites</CardTitle>
             <MapPin className="h-4 w-4 text-muted-foreground" />
@@ -397,7 +671,7 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="surface-1dp">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Traffic</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
@@ -411,28 +685,141 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
         </Card>
       </div>
 
-      <Card>
+      {/* GDPR Data Rights Panel - Prominent */}
+      <Card className="border-2 border-blue-500 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-950/30 dark:to-indigo-950/30">
+        <CardContent className="py-4">
+          <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-500 rounded-lg">
+                <Shield className="h-6 w-6 text-white" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">GDPR Data Rights</h3>
+                <p className="text-sm text-muted-foreground">
+                  {selectedStations.size > 0
+                    ? `${selectedStations.size} client${selectedStations.size > 1 ? 's' : ''} selected`
+                    : 'Select clients from the table below to manage their data'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Button
+                variant="outline"
+                className="bg-white dark:bg-background border-blue-300 hover:bg-blue-50 dark:hover:bg-blue-950"
+                onClick={handleDownloadSelectedClients}
+                disabled={selectedStations.size === 0}
+              >
+                <FileDown className="mr-2 h-4 w-4 text-blue-600" />
+                Download Data ({selectedStations.size})
+              </Button>
+              <Button
+                variant="outline"
+                className="bg-white dark:bg-background border-red-300 hover:bg-red-50 dark:hover:bg-red-950"
+                onClick={handleDeleteSelectedClients}
+                disabled={selectedStations.size === 0}
+              >
+                <Trash2 className="mr-2 h-4 w-4 text-red-500" />
+                Delete Data ({selectedStations.size})
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-3 border-t pt-3">
+            <strong>GDPR Compliance:</strong> Article 15 (Right of Access) allows data subjects to obtain a copy of their personal data.
+            Article 17 (Right to Erasure) allows data subjects to request deletion of their personal data.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* GDPR Delete Confirmation Dialog */}
+      <Dialog open={isGdprDeleteDialogOpen} onOpenChange={setIsGdprDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-500">
+              <AlertCircle className="h-5 w-5" />
+              Confirm Data Deletion
+            </DialogTitle>
+            <DialogDescription className="pt-4 space-y-3">
+              <p>
+                You are about to permanently delete all data for <strong>{selectedStations.size} client{selectedStations.size > 1 ? 's' : ''}</strong>.
+              </p>
+              <div className="bg-muted p-3 rounded-lg font-mono text-xs max-h-32 overflow-y-auto">
+                {Array.from(selectedStations).map(mac => {
+                  const station = stations.find(s => s.macAddress === mac);
+                  return (
+                    <div key={mac} className="py-1 border-b last:border-0">
+                      <span className="font-medium">{mac}</span>
+                      {station?.hostName && <span className="text-muted-foreground ml-2">({station.hostName})</span>}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-red-500 font-medium">
+                This action cannot be undone. All connection history, events, and statistics
+                for these devices will be permanently removed.
+              </p>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-3 mt-4">
+            <Button
+              variant="outline"
+              onClick={() => setIsGdprDeleteDialogOpen(false)}
+              disabled={isDeletingClientData}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleDeleteClientData(Array.from(selectedStations))}
+              disabled={isDeletingClientData}
+            >
+              {isDeletingClientData ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  Deleting...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete All Data ({selectedStations.size})
+                </>
+              )}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Card className="surface-2dp">
         <CardHeader>
-          <CardTitle>Connected Clients</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle>Connected Clients</CardTitle>
+            <SaveToWorkspace
+              widgetId="connected-clients-table"
+              widgetType="topn_table"
+              title="Connected Clients"
+              endpointRefs={['clients.list']}
+              sourcePage="clients"
+              catalogId="table_clients_all"
+            />
+          </div>
           <CardDescription>
-            Click any client to view detailed connection information
+            Select clients using the checkboxes to manage their GDPR data rights
           </CardDescription>
           
           <div className="flex flex-col sm:flex-row gap-4">
-            <div className="flex-1">
+            <div className="flex-[2] min-w-0">
               <div className="relative">
-                <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search clients..."
+                  placeholder="Search clients by name, MAC, or site..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-8"
+                  className="pl-10 h-10"
                 />
               </div>
             </div>
             
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-32">
+              <SelectTrigger className="w-28 h-10">
                 <Filter className="mr-2 h-4 w-4" />
                 <SelectValue placeholder="Status" />
               </SelectTrigger>
@@ -444,20 +831,8 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
               </SelectContent>
             </Select>
 
-            <Select value={siteFilter} onValueChange={setSiteFilter}>
-              <SelectTrigger className="w-36">
-                <SelectValue placeholder="Site" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Sites</SelectItem>
-                {getUniqueSites().map((site) => (
-                  <SelectItem key={site} value={site}>{site}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
             <Select value={deviceTypeFilter} onValueChange={setDeviceTypeFilter}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-32 h-10">
                 <SelectValue placeholder="Device Type" />
               </SelectTrigger>
               <SelectContent>
@@ -469,11 +844,12 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
             </Select>
             
             <Select value={apFilter} onValueChange={setApFilter}>
-              <SelectTrigger className="w-36">
+              <SelectTrigger className="w-36 h-10">
+                <Wifi className="mr-2 h-4 w-4" />
                 <SelectValue placeholder="Access Point" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">All APs</SelectItem>
+                <SelectItem value="all">All</SelectItem>
                 {getUniqueAPs().map((ap) => (
                   <SelectItem key={ap} value={ap}>{ap}</SelectItem>
                 ))}
@@ -482,13 +858,13 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {filteredStations.length === 0 ? (
+          {sortedStations.length === 0 ? (
             <div className="text-center py-8">
               <Users className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
               <h3 className="text-lg font-medium mb-2">No Connected Clients Found</h3>
               <p className="text-muted-foreground">
                 {searchTerm || statusFilter !== 'all' || apFilter !== 'all' || siteFilter !== 'all' || deviceTypeFilter !== 'all'
-                  ? 'No clients match your current filters.' 
+                  ? 'No clients match your current filters.'
                   : 'No clients are currently connected to the network.'}
               </p>
             </div>
@@ -497,25 +873,26 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
               <Table className="text-[11px]">
                 <TableHeader>
                   <TableRow className="h-8">
-                    <TableHead className="w-12 p-2 text-[10px]">
+                    <TableHead className="w-10 p-1 text-[10px]">
                       <Checkbox
-                        checked={selectedStations.size === filteredStations.length && filteredStations.length > 0}
+                        checked={selectedStations.size === sortedStations.length && sortedStations.length > 0}
                         onCheckedChange={handleSelectAll}
                         className="h-3 w-3"
                       />
                     </TableHead>
-                    <TableHead className="w-16 p-2 text-[10px]">Status</TableHead>
-                    <TableHead className="w-28 p-2 text-[10px]">Client Info</TableHead>
-                    <TableHead className="w-32 p-2 text-[10px]">Device Info</TableHead>
-                    <TableHead className="w-28 p-2 text-[10px]">User & Network</TableHead>
-                    <TableHead className="w-28 p-2 text-[10px]">Access Point</TableHead>
-                    <TableHead className="w-24 p-2 text-[10px]">Connection</TableHead>
-                    <TableHead className="w-24 p-2 text-[10px]">Traffic</TableHead>
-                    <TableHead className="w-16 p-2 text-[10px]">Actions</TableHead>
+                    {customization.visibleColumnConfigs.map(column => (
+                      <TableHead
+                        key={column.key}
+                        className="p-1 text-[10px] cursor-pointer select-none hover:bg-muted/50 transition-colors"
+                        onClick={() => handleSort(column.key)}
+                      >
+                        {column.label}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filteredStations.map((station, index) => (
+                  {sortedStations.map((station, index) => (
                     <TableRow 
                       key={station.macAddress || index}
                       className="cursor-pointer hover:bg-muted/50 h-10"
@@ -540,142 +917,12 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
                           onClick={(e) => e.stopPropagation()}
                         />
                       </TableCell>
-                      
-                      <TableCell className="p-1">
-                        {station.status ? (
-                          <Badge variant={getStatusBadgeVariant(station.status)} className="text-[9px] px-1 py-0 h-3 min-h-0">
-                            {station.status}
-                          </Badge>
-                        ) : (
-                          '-'
-                        )}
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <div>
-                          <div className="font-mono text-[9px] leading-none mb-0.5">{station.macAddress}</div>
-                          <div className="font-mono text-[8px] text-muted-foreground leading-none mb-0.5">
-                            {station.ipAddress || 'No IP'}
-                          </div>
-                          {station.hostName && (
-                            <div className="text-[8px] text-muted-foreground truncate leading-none">
-                              {station.hostName}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <div>
-                          <div className="flex items-center gap-0.5 mb-0.5">
-                            <MapPin className="h-2 w-2 text-muted-foreground flex-shrink-0" />
-                            <span className="text-[9px] truncate leading-none">{station.siteName || '-'}</span>
-                            {station.siteRating !== undefined && (
-                              <>
-                                <Star className="h-2 w-2 text-yellow-500 flex-shrink-0" />
-                                <span className="text-[8px] leading-none">{station.siteRating}</span>
-                              </>
-                            )}
-                          </div>
-                          {station.deviceType && (
-                            <Badge variant="outline" className="text-[8px] h-2.5 px-1 py-0 mb-0.5">
-                              {station.deviceType}
-                            </Badge>
-                          )}
-                          {station.manufacturer && (
-                            <div className="text-[8px] text-muted-foreground truncate leading-none">
-                              {station.manufacturer}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <div>
-                          <div className="flex items-center gap-0.5 mb-0.5">
-                            <User className="h-2 w-2 text-muted-foreground flex-shrink-0" />
-                            <span className="text-[9px] truncate leading-none">{station.username || '-'}</span>
-                          </div>
-                          {station.role && (
-                            <div className="text-[8px] text-muted-foreground leading-none mb-0.5">{station.role}</div>
-                          )}
-                          <div className="flex items-center gap-0.5">
-                            <Router className="h-2 w-2 text-muted-foreground flex-shrink-0" />
-                            <span className="text-[8px] truncate leading-none">{station.network || '-'}</span>
-                          </div>
-                        </div>
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <div>
-                          <div className="text-[9px] truncate leading-none mb-0.5">{station.apName || '-'}</div>
-                          {station.apSerial && (
-                            <div className="font-mono text-[8px] text-muted-foreground truncate leading-none mb-0.5">
-                              {station.apSerial}
-                            </div>
-                          )}
-                          <div className="flex items-center gap-0.5">
-                            <Clock className="h-2 w-2 text-muted-foreground flex-shrink-0" />
-                            <span className="text-[8px] leading-none">{station.lastSeen || '-'}</span>
-                          </div>
-                        </div>
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <div>
-                          {station.signalStrength !== undefined ? (
-                            <div className="flex items-center gap-0.5 mb-0.5">
-                              <Signal className="h-2 w-2 flex-shrink-0" />
-                              <span className="text-[9px] leading-none">{station.signalStrength} dBm</span>
-                            </div>
-                          ) : (
-                            <span className="text-[9px] leading-none">-</span>
-                          )}
-                          {station.rxRate && (
-                            <div className="text-[8px] text-muted-foreground leading-none mb-0.5">
-                              {station.rxRate}
-                            </div>
-                          )}
-                          {station.channel && (
-                            <div className="text-[8px] text-muted-foreground leading-none">
-                              Ch {station.channel}
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <div>
-                          <div className="flex items-center gap-0.5 mb-0.5">
-                            <Download className="h-2 w-2 text-green-600 flex-shrink-0" />
-                            <span className="text-[8px] leading-none">{formatBytes(station.rxBytes || station.clientBandwidthBytes || 0)}</span>
-                          </div>
-                          <div className="flex items-center gap-0.5 mb-0.5">
-                            <Upload className="h-2 w-2 text-blue-600 flex-shrink-0" />
-                            <span className="text-[8px] leading-none">{formatBytes(station.txBytes || station.outBytes || 0)}</span>
-                          </div>
-                          {(station.packets || station.outPackets) && (
-                            <div className="text-[8px] text-muted-foreground leading-none">
-                              {station.packets || station.outPackets}p
-                            </div>
-                          )}
-                        </div>
-                      </TableCell>
-                      
-                      <TableCell className="p-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedStation(station);
-                            setIsModalOpen(true);
-                          }}
-                          className="h-4 w-4 p-0"
-                        >
-                          <Eye className="h-2.5 w-2.5" />
-                        </Button>
-                      </TableCell>
+
+                      {customization.visibleColumnConfigs.map(column => (
+                        <TableCell key={column.key}>
+                          {column.renderCell ? column.renderCell(station) : (station as any)[column.key]}
+                        </TableCell>
+                      ))}
                     </TableRow>
                   ))}
                 </TableBody>
@@ -685,528 +932,546 @@ export function ConnectedClients({ onShowDetail }: ConnectedClientsProps) {
         </CardContent>
       </Card>
 
-      {/* Bulk Actions Panel */}
-      {selectedStations.size > 0 && (
-        <Card className="border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950">
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base">Bulk Actions</CardTitle>
-                <CardDescription>
-                  {selectedStations.size} station{selectedStations.size !== 1 ? 's' : ''} selected
-                </CardDescription>
-              </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setSelectedStations(new Set())}
-              >
-                Clear Selection
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={() => {
-                  setActionType('delete');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <Trash2 className="h-3 w-3" />
-                <span>Delete</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionType('disassociate');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <UserX className="h-3 w-3" />
-                <span>Disassociate</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionType('reauthenticate');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <RotateCcw className="h-3 w-3" />
-                <span>Reauthenticate</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionType('addToGroup');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <UserPlus className="h-3 w-3" />
-                <span>Add to Group</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionType('removeFromGroup');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <UserMinus className="h-3 w-3" />
-                <span>Remove from Group</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionType('addToAllowList');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <ShieldCheck className="h-3 w-3" />
-                <span>Add to Allow List</span>
-              </Button>
-              
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setActionType('addToDenyList');
-                  setIsActionsModalOpen(true);
-                }}
-                className="flex items-center space-x-1"
-              >
-                <ShieldX className="h-3 w-3" />
-                <span>Add to Deny List</span>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Actions Confirmation Modal */}
-      <Dialog open={isActionsModalOpen} onOpenChange={setIsActionsModalOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center space-x-2">
-              <Settings className="h-5 w-5" />
-              <span>Confirm Action</span>
-            </DialogTitle>
-            <DialogDescription>
-              This action will affect {selectedStations.size} selected station{selectedStations.size !== 1 ? 's' : ''}.
-            </DialogDescription>
-          </DialogHeader>
-          
-          <div className="space-y-4">
-            {(actionType === 'addToGroup' || actionType === 'removeFromGroup') && (
+      {/* Bulk Actions Modal */}
+      <DetailSlideOut
+        isOpen={isActionsModalOpen}
+        onClose={() => setIsActionsModalOpen(false)}
+        title="Bulk Actions"
+        description={`Perform actions on ${selectedStations.size} selected clients`}
+        width="md"
+      >
+        <div className="space-y-4">
+            <div>
+              <h4 className="font-medium mb-2">Station Management</h4>
               <div className="space-y-2">
-                <label htmlFor="groupId" className="text-sm font-medium">Group ID:</label>
-                <Input
-                  id="groupId"
-                  value={groupId}
-                  onChange={(e) => setGroupId(e.target.value)}
-                  placeholder="Enter group ID"
-                />
+                <Button
+                  onClick={() => performBulkAction('disassociate')}
+                  disabled={isPerformingAction}
+                  variant="outline"
+                  className="w-full justify-start"
+                >
+                  <UserX className="mr-2 h-4 w-4" />
+                  Disassociate Stations
+                </Button>
+                
+                <Button
+                  onClick={() => performBulkAction('reauthenticate')}
+                  disabled={isPerformingAction}
+                  variant="outline"
+                  className="w-full justify-start"
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Reauthenticate Stations
+                </Button>
+                
+                <Button
+                  onClick={() => performBulkAction('delete')}
+                  disabled={isPerformingAction}
+                  variant="destructive"
+                  className="w-full justify-start"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Delete Stations
+                </Button>
               </div>
-            )}
-            
-            {(actionType === 'addToAllowList' || actionType === 'addToDenyList') && (
-              <div className="space-y-2">
-                <label htmlFor="siteId" className="text-sm font-medium">Site ID:</label>
-                <Input
-                  id="siteId"
-                  value={siteId}
-                  onChange={(e) => setSiteId(e.target.value)}
-                  placeholder="Enter site ID"
-                />
-              </div>
-            )}
-            
-            <div className="flex justify-end space-x-2">
-              <Button
-                variant="outline"
-                onClick={() => setIsActionsModalOpen(false)}
-                disabled={isPerformingAction}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={() => performBulkAction(actionType)}
-                disabled={isPerformingAction}
-                variant={actionType === 'delete' ? 'destructive' : 'default'}
-              >
-                {isPerformingAction ? 'Processing...' : 'Confirm'}
-              </Button>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+            
+            <div>
+              <h4 className="font-medium mb-2">Group Management</h4>
+              <div className="space-y-2">
+                <div>
+                  <Input
+                    placeholder="Group ID"
+                    value={groupId}
+                    onChange={(e) => setGroupId(e.target.value)}
+                    className="mb-2"
+                  />
+                  <div className="space-y-2">
+                    <Button
+                      onClick={() => performBulkAction('addToGroup')}
+                      disabled={isPerformingAction || !groupId}
+                      variant="outline"
+                      className="w-full justify-start"
+                    >
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      Add to Group
+                    </Button>
+                    
+                    <Button
+                      onClick={() => performBulkAction('removeFromGroup')}
+                      disabled={isPerformingAction || !groupId}
+                      variant="outline"
+                      className="w-full justify-start"
+                    >
+                      <UserMinus className="mr-2 h-4 w-4" />
+                      Remove from Group
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div>
+              <h4 className="font-medium mb-2">Access Control</h4>
+              <div className="space-y-2">
+                <div>
+                  <Input
+                    placeholder="Site ID"
+                    value={siteId}
+                    onChange={(e) => setSiteId(e.target.value)}
+                    className="mb-2"
+                  />
+                  <div className="space-y-2">
+                    <Button
+                      onClick={() => performBulkAction('addToAllowList')}
+                      disabled={isPerformingAction || !siteId}
+                      variant="outline"
+                      className="w-full justify-start"
+                    >
+                      <ShieldCheck className="mr-2 h-4 w-4" />
+                      Add to Allow List
+                    </Button>
+                    
+                    <Button
+                      onClick={() => performBulkAction('addToDenyList')}
+                      disabled={isPerformingAction || !siteId}
+                      variant="outline"
+                      className="w-full justify-start"
+                    >
+                      <ShieldX className="mr-2 h-4 w-4" />
+                      Add to Deny List
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+        </div>
+      </DetailSlideOut>
 
-      {/* Client Details Modal */}
-      <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-        <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden">
-          <DialogHeader>
-            <DialogTitle className="flex items-center space-x-2">
-              <Users className="h-5 w-5" />
-              <span>Client Details</span>
-              {selectedStation?.status && (
-                <Badge variant={getStatusBadgeVariant(selectedStation.status)}>
-                  {selectedStation.status}
-                </Badge>
-              )}
-            </DialogTitle>
-            <DialogDescription>
-              {selectedStation?.hostName || selectedStation?.macAddress}
-            </DialogDescription>
-          </DialogHeader>
+      {/* Station Detail Modal */}
+      <DetailSlideOut
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={`Client Details - ${selectedStation?.hostName || selectedStation?.macAddress}`}
+        description="Detailed information and events for this connected client"
+        width="3xl"
+      >
           
-          <ScrollArea className="h-[600px] w-full">
-            {selectedStation && (
-              <Tabs 
-                defaultValue="overview" 
-                className="space-y-4"
-                onValueChange={(value) => {
-                  if (value === 'events' && selectedStation) {
-                    loadStationEvents(selectedStation.macAddress);
-                  }
-                }}
-              >
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="overview">Overview</TabsTrigger>
-                  <TabsTrigger value="connection">Connection</TabsTrigger>
-                  <TabsTrigger value="technical">Technical</TabsTrigger>
-                  <TabsTrigger value="events">Events</TabsTrigger>
-                </TabsList>
-
-                <TabsContent value="overview" className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">Device Information</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">MAC Address:</span>
-                          <span className="font-mono">{selectedStation.macAddress}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">IP Address:</span>
-                          <span className="font-mono">{selectedStation.ipAddress || 'N/A'}</span>
-                        </div>
-                        {selectedStation.ipv6Address && (
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">IPv6 Address:</span>
-                            <span className="font-mono text-sm">{selectedStation.ipv6Address}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Hostname:</span>
-                          <span>{selectedStation.hostName || 'Unknown'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Device Type:</span>
-                          <span>{selectedStation.deviceType || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Manufacturer:</span>
-                          <span>{selectedStation.manufacturer || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Username:</span>
-                          <span>{selectedStation.username || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Role:</span>
-                          <span>{selectedStation.role || 'N/A'}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">Network Activity</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Site Name:</span>
-                          <span>{selectedStation.siteName || 'N/A'}</span>
-                        </div>
-                        {selectedStation.siteRating !== undefined && (
-                          <div className="flex justify-between items-center">
-                            <span className="text-muted-foreground">Site Rating:</span>
-                            <div className="flex items-center space-x-1">
-                              <Star className="h-4 w-4 text-yellow-500" />
-                              <span>{selectedStation.siteRating}</span>
-                            </div>
-                          </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Last Seen:</span>
-                          <span>{selectedStation.lastSeen || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Data Downloaded:</span>
-                          <div className="flex items-center space-x-1">
-                            <Download className="h-4 w-4" />
-                            <span>{formatBytes(selectedStation.rxBytes || selectedStation.clientBandwidthBytes || 0)}</span>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Data Uploaded:</span>
-                          <div className="flex items-center space-x-1">
-                            <Upload className="h-4 w-4" />
-                            <span>{formatBytes(selectedStation.txBytes || selectedStation.outBytes || 0)}</span>
-                          </div>
-                        </div>
-                        {(selectedStation.packets || selectedStation.outPackets) && (
-                          <div className="flex justify-between">
-                            <span className="text-muted-foreground">Packets:</span>
-                            <span>{selectedStation.packets || selectedStation.outPackets}</span>
-                          </div>
-                        )}
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Network:</span>
-                          <span>{selectedStation.network || 'N/A'}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="connection" className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">Access Point Details</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">AP Name:</span>
-                          <span>{selectedStation.apName || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">AP Serial:</span>
-                          <span className="font-mono">{selectedStation.apSerial || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Signal Strength:</span>
-                          <div className="flex items-center space-x-1">
-                            <Signal className="h-4 w-4" />
-                            <span>{selectedStation.signalStrength !== undefined ? `${selectedStation.signalStrength} dBm` : 'N/A'}</span>
-                          </div>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Channel:</span>
-                          <span>{selectedStation.channel || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">RX Rate:</span>
-                          <span>{selectedStation.rxRate || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">TX Rate:</span>
-                          <span>{selectedStation.txRate || 'N/A'}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">Connection Status</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Status:</span>
-                          <Badge variant={getStatusBadgeVariant(selectedStation.status || '')}>
-                            {selectedStation.status || 'Unknown'}
-                          </Badge>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Connection Duration:</span>
-                          <span>{formatDuration(selectedStation.duration || selectedStation.associationTime || 0)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Last Seen:</span>
-                          <span>{selectedStation.lastSeen || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Authentication:</span>
-                          <span>{selectedStation.authMethod || selectedStation.authentication || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">VLAN ID:</span>
-                          <span>{selectedStation.vlanId || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Session ID:</span>
-                          <span className="font-mono text-sm">{selectedStation.sessionId || 'N/A'}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="technical" className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">Traffic Statistics</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Bytes Received:</span>
-                          <div className="flex items-center space-x-1">
-                            <Download className="h-4 w-4" />
-                            <span>{formatBytes(selectedStation.rxBytes || selectedStation.clientBandwidthBytes || 0)}</span>
-                          </div>
-                        </div>
-                        <div className="flex justify-between items-center">
-                          <span className="text-muted-foreground">Bytes Transmitted:</span>
-                          <div className="flex items-center space-x-1">
-                            <Upload className="h-4 w-4" />
-                            <span>{formatBytes(selectedStation.txBytes || selectedStation.outBytes || 0)}</span>
-                          </div>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Packets Received:</span>
-                          <span>{selectedStation.rxPackets || selectedStation.inPackets || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Packets Transmitted:</span>
-                          <span>{selectedStation.txPackets || selectedStation.outPackets || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Total Packets:</span>
-                          <span>{selectedStation.packets || 'N/A'}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="text-base">Technical Details</CardTitle>
-                      </CardHeader>
-                      <CardContent className="space-y-2">
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">BSSID:</span>
-                          <span className="font-mono">{selectedStation.bssid || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">SSID:</span>
-                          <span>{selectedStation.ssid || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Band:</span>
-                          <span>{selectedStation.band || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Protocol:</span>
-                          <span>{selectedStation.protocol || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Encryption:</span>
-                          <span>{selectedStation.encryption || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Radio Type:</span>
-                          <span>{selectedStation.radioType || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Capabilities:</span>
-                          <span>{selectedStation.capabilities || 'N/A'}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                </TabsContent>
-
-                <TabsContent value="events" className="space-y-4">
+          {selectedStation && (
+            <Tabs defaultValue="details" className="w-full">
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="details">Client Information</TabsTrigger>
+                <TabsTrigger value="events" onClick={() => loadStationEvents(selectedStation.macAddress)}>
+                  Recent Events
+                </TabsTrigger>
+              </TabsList>
+              
+              <TabsContent value="details" className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Card>
                     <CardHeader>
-                      <CardTitle className="text-base">Station Events</CardTitle>
-                      <CardDescription>
-                        Event history for {selectedStation.macAddress}
-                      </CardDescription>
+                      <CardTitle className="text-lg">Basic Information</CardTitle>
                     </CardHeader>
-                    <CardContent>
-                      {isLoadingEvents ? (
-                        <div className="space-y-2">
-                          {[1, 2, 3].map((i) => (
-                            <Skeleton key={i} className="h-12 w-full" />
-                          ))}
-                        </div>
-                      ) : stationEvents.length === 0 ? (
-                        <div className="text-center py-8">
-                          <Activity className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-                          <h3 className="text-lg font-medium mb-2">No Events Found</h3>
-                          <p className="text-muted-foreground">
-                            No events recorded for this station.
-                          </p>
-                        </div>
-                      ) : (
-                        <div className="space-y-3">
-                          {stationEvents.map((event, index) => (
-                            <div key={index} className="border rounded-lg p-3">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center space-x-2">
-                                  <Badge variant="outline">
-                                    {event.eventType || event.type || 'Event'}
-                                  </Badge>
-                                  <span className="text-sm font-medium">
-                                    {event.description || event.message || 'No description'}
-                                  </span>
-                                </div>
-                                <span className="text-xs text-muted-foreground">
-                                  {event.timestamp || event.time || 'Unknown time'}
-                                </span>
-                              </div>
-                              {event.details && (
-                                <p className="text-sm text-muted-foreground">
-                                  {event.details}
-                                </p>
-                              )}
-                              {(event.severity || event.level) && (
-                                <Badge 
-                                  variant={
-                                    (event.severity || event.level).toLowerCase() === 'error' ? 'destructive' : 
-                                    (event.severity || event.level).toLowerCase() === 'warning' ? 'secondary' : 
-                                    'outline'
-                                  }
-                                  className="mt-2"
-                                >
-                                  {event.severity || event.level}
-                                </Badge>
-                              )}
-                            </div>
-                          ))}
-                        </div>
-                      )}
+                    <CardContent className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="font-medium">MAC Address:</span>
+                        <span className="font-mono">{selectedStation.macAddress}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">IP Address:</span>
+                        <span className="font-mono">{selectedStation.ipAddress || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Hostname:</span>
+                        <span>{selectedStation.hostName || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Status:</span>
+                        <Badge className={getStatusBadgeClass(selectedStation.status || '')}>
+                          {selectedStation.status || 'Unknown'}
+                        </Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Device Type:</span>
+                        <span>{selectedStation.deviceType || 'Unknown'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Manufacturer:</span>
+                        <span>{selectedStation.manufacturer || 'Unknown'}</span>
+                      </div>
                     </CardContent>
                   </Card>
+                  
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Network Information</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="font-medium">Site:</span>
+                        <span>{selectedStation.siteName || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Access Point:</span>
+                        <span className="font-mono text-sm">{selectedStation.apSerial || selectedStation.apName || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Network:</span>
+                        <span>{selectedStation.network || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Role:</span>
+                        <span>{selectedStation.role || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Username:</span>
+                        <span>{selectedStation.username || 'N/A'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Last Seen:</span>
+                        <span>{selectedStation.lastSeen || 'N/A'}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Traffic Statistics</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium flex items-center gap-1">
+                          <Download className="h-4 w-4 text-green-500" />
+                          Downloaded:
+                        </span>
+                        <span>{formatBytes(selectedStation.txBytes || selectedStation.outBytes || 0)}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="font-medium flex items-center gap-1">
+                          <Upload className="h-4 w-4 text-blue-600" />
+                          Uploaded:
+                        </span>
+                        <span>{formatBytes(selectedStation.rxBytes || selectedStation.inBytes || 0)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="font-medium">Total Traffic:</span>
+                        <span>{formatBytes((selectedStation.rxBytes || selectedStation.inBytes || 0) + (selectedStation.txBytes || selectedStation.outBytes || 0))}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card>
+                    <CardHeader>
+                      <CardTitle className="text-lg">Additional Details</CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-2">
+                      <div className="flex justify-between">
+                        <span className="font-medium">Site Rating:</span>
+                        <div className="flex items-center gap-1">
+                          {selectedStation.siteRating !== undefined && (
+                            <>
+                              <Star className="h-4 w-4 text-amber-500" />
+                              <span>{selectedStation.siteRating}</span>
+                            </>
+                          ) || <span>N/A</span>}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
                 </TabsContent>
-              </Tabs>
-            )}
-          </ScrollArea>
-        </DialogContent>
-      </Dialog>
+              
+              <TabsContent value="events" className="space-y-4">
+                {isLoadingEvents ? (
+                  <div className="flex items-center justify-center py-12">
+                    <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+                  </div>
+                ) : stationEvents.length === 0 ? (
+                  <div className="text-center py-12">
+                    <Activity className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
+                    <p className="text-muted-foreground font-medium mb-2">No station events available</p>
+                    <p className="text-sm text-muted-foreground mb-2">
+                      Station {selectedStation?.macAddress}
+                    </p>
+                    <div className="text-xs text-muted-foreground max-w-md mx-auto space-y-1 mt-4">
+                      <p>Station events may be unavailable if:</p>
+                      <p>• Your Extreme Platform ONE doesn't support the station events API</p>
+                      <p>• No events have been logged for this station in the last 30 days</p>
+                      <p>• Audit logging is not enabled</p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() => {
+                        if (selectedStation) {
+                          loadStationEvents(selectedStation.macAddress);
+                        }
+                      }}
+                    >
+                      <RefreshCw className="h-4 w-4 mr-2" />
+                      Retry
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Event Type Filter and Roaming Trail Button */}
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          variant={eventTypeFilter === 'all' ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setEventTypeFilter('all')}
+                        >
+                          All Events ({stationEvents.length})
+                        </Button>
+                        {Array.from(new Set(stationEvents.map(e => e.eventType))).sort().map((type) => (
+                          <Button
+                            key={type}
+                            variant={eventTypeFilter === type ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setEventTypeFilter(type)}
+                          >
+                            {type} ({stationEvents.filter(e => e.eventType === type).length})
+                          </Button>
+                        ))}
+                      </div>
+                      <Button
+                        variant="default"
+                        size="sm"
+                        onClick={() => setShowRoamingTrail(true)}
+                        className="flex items-center gap-2"
+                      >
+                        <Route className="h-4 w-4" />
+                        View Roaming Trail
+                      </Button>
+                    </div>
+
+                    {/* Event Timeline */}
+                    <ScrollArea className="h-[500px]">
+                      <div className="space-y-3">
+                        {stationEvents
+                          .filter(event => eventTypeFilter === 'all' || event.eventType === eventTypeFilter)
+                          .map((event, idx) => {
+                            const eventDate = new Date(parseInt(event.timestamp));
+
+                            return (
+                              <Card key={event.id || idx} className="relative pl-8">
+                                {/* Timeline dot */}
+                                <div className={`absolute left-3 top-6 w-2 h-2 rounded-full ${
+                                  event.eventType === 'Roam' ? 'bg-blue-500' :
+                                  event.eventType === 'Associate' ? 'bg-green-500' :
+                                  event.eventType === 'Disassociate' ? 'bg-red-500' :
+                                  event.eventType === 'Authenticate' ? 'bg-purple-500' :
+                                  'bg-gray-500'
+                                }`} />
+                                {idx !== stationEvents.filter(e => eventTypeFilter === 'all' || e.eventType === eventTypeFilter).length - 1 && (
+                                  <div className="absolute left-3.5 top-8 w-0.5 h-full bg-border" />
+                                )}
+
+                                <CardContent className="pt-4 pb-4">
+                                  <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1">
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <Badge
+                                          variant={
+                                            event.eventType === 'Associate' || event.eventType === 'Authenticate' ? 'default' :
+                                            event.eventType === 'Disassociate' ? 'destructive' :
+                                            'secondary'
+                                          }
+                                        >
+                                          {event.eventType}
+                                        </Badge>
+                                        <span className="text-xs text-muted-foreground">
+                                          {eventDate.toLocaleString()}
+                                        </span>
+                                      </div>
+
+                                      {event.details && (() => {
+                                        // Parse details field for structured information
+                                        const parseDetails = (details: string) => {
+                                          const parsed: Record<string, string> = {};
+                                          const regex = /(\w+)\[([^\]]+)\]/g;
+                                          let match;
+                                          while ((match = regex.exec(details)) !== null) {
+                                            parsed[match[1]] = match[2];
+                                          }
+                                          return parsed;
+                                        };
+
+                                        const parsedDetails = parseDetails(event.details);
+                                        const hasStructuredData = Object.keys(parsedDetails).length > 0;
+
+                                        return (
+                                          <div className="mb-2">
+                                            {/* Show structured details if available */}
+                                            {hasStructuredData ? (
+                                              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mb-2">
+                                                {parsedDetails.Cause && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Cause: </span>
+                                                    <span className="font-medium">{parsedDetails.Cause}</span>
+                                                  </div>
+                                                )}
+                                                {parsedDetails.Reason && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Reason: </span>
+                                                    <span className="font-medium">{parsedDetails.Reason}</span>
+                                                  </div>
+                                                )}
+                                                {parsedDetails.Status && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Status: </span>
+                                                    <span className="font-medium">{parsedDetails.Status}</span>
+                                                  </div>
+                                                )}
+                                                {parsedDetails.Code && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Code: </span>
+                                                    <span className="font-mono font-medium">{parsedDetails.Code}</span>
+                                                  </div>
+                                                )}
+                                                {parsedDetails.DevFamily && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Device: </span>
+                                                    <span className="font-medium">{parsedDetails.DevFamily}</span>
+                                                  </div>
+                                                )}
+                                                {parsedDetails.Hostname && (
+                                                  <div>
+                                                    <span className="text-muted-foreground">Hostname: </span>
+                                                    <span className="font-medium">{parsedDetails.Hostname}</span>
+                                                  </div>
+                                                )}
+                                              </div>
+                                            ) : (
+                                              <p className="text-sm text-foreground">{event.details}</p>
+                                            )}
+                                          </div>
+                                        );
+                                      })()}
+
+                                      <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+                                        {event.apName && (
+                                          <div>
+                                            <span className="text-muted-foreground">AP: </span>
+                                            <span className="font-medium">{event.apName}</span>
+                                          </div>
+                                        )}
+                                        {event.apSerial && (
+                                          <div>
+                                            <span className="text-muted-foreground">AP Serial: </span>
+                                            <span className="font-mono text-xs font-medium">{event.apSerial}</span>
+                                          </div>
+                                        )}
+                                        {event.ssid && (
+                                          <div>
+                                            <span className="text-muted-foreground">SSID: </span>
+                                            <span className="font-medium">{event.ssid}</span>
+                                          </div>
+                                        )}
+                                        {event.ipAddress && (
+                                          <div>
+                                            <span className="text-muted-foreground">IP: </span>
+                                            <span className="font-mono font-medium">{event.ipAddress}</span>
+                                          </div>
+                                        )}
+                                        {event.ipv6Address && (
+                                          <div className="col-span-2">
+                                            <span className="text-muted-foreground">IPv6: </span>
+                                            <span className="font-mono text-xs font-medium">{event.ipv6Address}</span>
+                                          </div>
+                                        )}
+                                        {event.type && (
+                                          <div>
+                                            <span className="text-muted-foreground">Type: </span>
+                                            <span className="font-medium">{event.type}</span>
+                                          </div>
+                                        )}
+                                        {event.level && (
+                                          <div>
+                                            <span className="text-muted-foreground">Level: </span>
+                                            <span className="font-medium">{event.level}</span>
+                                          </div>
+                                        )}
+                                        {event.category && (
+                                          <div>
+                                            <span className="text-muted-foreground">Category: </span>
+                                            <span className="font-medium">{event.category}</span>
+                                          </div>
+                                        )}
+                                        {event.context && (
+                                          <div>
+                                            <span className="text-muted-foreground">Context: </span>
+                                            <span className="font-medium">{event.context}</span>
+                                          </div>
+                                        )}
+                                        {event.id && (
+                                          <div className="col-span-2">
+                                            <span className="text-muted-foreground">Event ID: </span>
+                                            <span className="font-mono text-xs">{event.id}</span>
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                      </div>
+                    </ScrollArea>
+                  </>
+                )}
+              </TabsContent>
+            </Tabs>
+          )}
+      </DetailSlideOut>
+
+      {/* Roaming Trail Full Page */}
+      {showRoamingTrail && selectedStation && (
+        <div className="fixed inset-0 z-50 bg-background">
+          <div className="h-full flex flex-col">
+            {/* Page Header */}
+            <div className="border-b bg-background px-6 py-4 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowRoamingTrail(false)}
+                  className="mr-2"
+                >
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Back
+                </Button>
+                <Route className="h-6 w-6 text-primary" />
+                <div>
+                  <h1 className="text-2xl font-bold">
+                    Roaming Trail - {selectedStation.hostName || selectedStation.macAddress}
+                  </h1>
+                  <p className="text-sm text-muted-foreground">
+                    Visual timeline showing how this client roamed between access points
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* Roaming Trail Content */}
+            <div className="flex-1 overflow-hidden">
+              <RoamingTrail
+                events={stationEvents}
+                apEvents={apEvents}
+                rrmEvents={rrmEvents}
+                macAddress={selectedStation.macAddress}
+                hostName={selectedStation.hostName}
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+// Export memoized component to prevent unnecessary re-renders
+export const ConnectedClients = memo(ConnectedClientsComponent);

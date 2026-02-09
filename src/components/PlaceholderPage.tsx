@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Construction } from 'lucide-react';
+import { Construction, Info } from 'lucide-react';
+import { Alert, AlertDescription } from './ui/alert';
 
 interface PlaceholderPageProps {
   title: string;
@@ -9,11 +10,6 @@ interface PlaceholderPageProps {
 export function PlaceholderPage({ title, description }: PlaceholderPageProps) {
   return (
     <div className="space-y-6">
-      <div>
-        <h1>{title}</h1>
-        <p className="text-muted-foreground">{description}</p>
-      </div>
-
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center space-x-2">
@@ -25,7 +21,7 @@ export function PlaceholderPage({ title, description }: PlaceholderPageProps) {
           <p className="text-muted-foreground">
             This section will be implemented as we add functionality piece by piece. 
             For now, you can use the API Test Tool to explore the available endpoints 
-            and test the API.
+            and test the Extreme Platform ONE API.
           </p>
         </CardContent>
       </Card>

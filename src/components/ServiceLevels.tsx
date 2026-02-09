@@ -1,660 +1,974 @@
 import { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Progress } from './ui/progress';
+import { Badge } from './ui/badge';
 import { Alert, AlertDescription } from './ui/alert';
-import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
-import { Clock, TrendingUp, TrendingDown, AlertTriangle, CheckCircle, XCircle, Activity, Wifi, Users, MapPin, Download, RefreshCcw } from 'lucide-react';
-import { apiService } from '../services/api';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Slider } from './ui/slider';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
+import { Skeleton } from './ui/skeleton';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine } from 'recharts';
+import { Activity, TrendingUp, TrendingDown, Wifi, Cable, Globe, RefreshCw, Calendar, Clock, AlertCircle, CheckCircle2, XCircle, Minus, Zap, BarChart3, MapPin, FolderTree, Radio, Database, Play, Pause, Info } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiService } from '../services/api';
+import { sleDataCollectionService, SLEDataPoint } from '../services/sleDataCollection';
+import { PageHeader } from './PageHeader';
+import { StatusBadge } from './StatusBadge';
+import { TYPOGRAPHY, SPACING, CARD_STYLES, ICON_SIZES, formatDateTime, formatMetric, TERMINOLOGY } from '../utils/ui-constants';
 
-interface ServiceLevelMetric {
-  id: string;
+interface MetricDefinition {
+  key: string;
+  name: string;
+  unit: string;
+  threshold_field: string;
+}
+
+interface MetricCatalog {
+  wireless: MetricDefinition[];
+  wired: MetricDefinition[];
+  wan: MetricDefinition[];
+}
+
+interface TimeSeriesDataPoint {
+  metric_key: string;
+  scope: string;
+  site_id: string;
+  timestamp: number;
+  value: number;
+  unit: string;
+  classifiers?: Record<string, number>;
+}
+
+interface SLEMetric {
+  key: string;
   name: string;
   currentValue: number;
-  target: number;
-  unit: string;
+  threshold: number;
   status: 'healthy' | 'warning' | 'critical';
   trend: 'up' | 'down' | 'stable';
-  lastUpdated: string;
-}
-
-interface SLATarget {
-  name: string;
-  target: number;
-  current: number;
   unit: string;
-  category: 'availability' | 'performance' | 'quality';
 }
 
-interface ServiceIncident {
+interface Site {
   id: string;
-  severity: 'low' | 'medium' | 'high' | 'critical';
-  title: string;
-  description: string;
-  startTime: string;
-  endTime?: string;
-  affectedServices: string[];
-  status: 'active' | 'resolved' | 'investigating';
+  name: string;
 }
+
+interface SiteGroup {
+  id: string;
+  name: string;
+}
+
+interface Network {
+  id: string;
+  name: string;
+  ssid?: string;
+}
+
+const METRIC_CATALOG: MetricCatalog = {
+  wireless: [
+    { key: 'time_to_connect', name: 'Time to Connect', unit: 'seconds', threshold_field: 'max_seconds' },
+    { key: 'coverage', name: 'Coverage', unit: 'percent_poor_coverage', threshold_field: 'max_percent' },
+    { key: 'capacity', name: 'Capacity', unit: 'percent_available_channel_capacity', threshold_field: 'min_available_channel_capacity_percent' },
+    { key: 'roaming', name: 'Roaming', unit: 'severity_score_1_to_5', threshold_field: 'max_severity' },
+    { key: 'successful_connects', name: 'Successful Connects', unit: 'percent_success', threshold_field: 'min_percent' },
+    { key: 'ap_health', name: 'AP Health', unit: 'percent_healthy', threshold_field: 'min_percent' }
+  ],
+  wired: [
+    { key: 'switch_health', name: 'Switch Health', unit: 'percent_healthy', threshold_field: 'min_percent' },
+    { key: 'successful_connects', name: 'Successful Connects', unit: 'percent_success', threshold_field: 'min_percent' }
+  ],
+  wan: [
+    { key: 'wan_link_health', name: 'WAN Link Health', unit: 'percent_healthy', threshold_field: 'min_percent' }
+  ]
+};
+
+const ROLLUP_OPTIONS = [
+  { value: '1m', label: '1 minute', ms: 1 * 60 * 1000 },
+  { value: '5m', label: '5 minutes', ms: 5 * 60 * 1000 },
+  { value: '15m', label: '15 minutes', ms: 15 * 60 * 1000 },
+  { value: '1h', label: '1 hour', ms: 60 * 60 * 1000 }
+];
+
+const TIME_RANGES = [
+  { value: '1h', label: 'Last Hour', days: 1/24 },
+  { value: '6h', label: 'Last 6 Hours', days: 6/24 },
+  { value: '24h', label: 'Last 24 Hours', days: 1 },
+  { value: '7d', label: 'Last 7 Days', days: 7 },
+  { value: '30d', label: 'Last 30 Days', days: 30 }
+];
 
 export function ServiceLevels() {
-  const [metrics, setMetrics] = useState<ServiceLevelMetric[]>([]);
-  const [slaTargets, setSlaTargets] = useState<SLATarget[]>([]);
-  const [incidents, setIncidents] = useState<ServiceIncident[]>([]);
-  const [historicalData, setHistoricalData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('overview');
+  const [scope, setScope] = useState<'wireless' | 'wired' | 'wan'>('wireless');
+  const [selectedMetrics, setSelectedMetrics] = useState<string[]>(METRIC_CATALOG.wireless.map(m => m.key));
+  const [rollup, setRollup] = useState('1m');
   const [timeRange, setTimeRange] = useState('24h');
+  const [isLoading, setIsLoading] = useState(false);
+  const [timeSeriesData, setTimeSeriesData] = useState<TimeSeriesDataPoint[]>([]);
+  const [cursorTimestamp, setCursorTimestamp] = useState<number>(Date.now());
+  const [startTimestamp, setStartTimestamp] = useState<number>(Date.now() - 24 * 60 * 60 * 1000);
+  const [endTimestamp, setEndTimestamp] = useState<number>(Date.now());
+  const [isCollectionActive, setIsCollectionActive] = useState(false);
+  const [collectionStats, setCollectionStats] = useState<any>(null);
+
+  // New filter states
+  const [sites, setSites] = useState<Site[]>([]);
+  const [siteGroups, setSiteGroups] = useState<SiteGroup[]>([]);
+  const [networks, setNetworks] = useState<Network[]>([]);
+  const [selectedSite, setSelectedSite] = useState<string>('all');
+  const [selectedSiteGroup, setSelectedSiteGroup] = useState<string>('all');
+  const [selectedWlan, setSelectedWlan] = useState<string>('all');
+  const [isLoadingFilters, setIsLoadingFilters] = useState(false);
+
+  // Load sites, site groups, and networks on mount
+  useEffect(() => {
+    loadFilterOptions();
+    
+    // Check if collection is already running
+    setIsCollectionActive(sleDataCollectionService.isCollectionActive());
+    updateCollectionStats();
+    
+    // Subscribe to data updates
+    const unsubscribe = sleDataCollectionService.subscribe(() => {
+      loadMetricsData();
+      updateCollectionStats();
+    });
+    
+    // Load existing data
+    loadMetricsData();
+    
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // When scope changes, update selected metrics to ALL metrics in the new scope
+  useEffect(() => {
+    const allMetrics = METRIC_CATALOG[scope].map(m => m.key);
+    setSelectedMetrics(allMetrics);
+    loadMetricsData();
+  }, [scope]);
 
   useEffect(() => {
-    // Add a small delay to prevent immediate API calls on mount
-    const timer = setTimeout(() => {
-      loadServiceLevelData();
-    }, 100);
+    loadMetricsData();
+  }, [selectedMetrics, rollup, timeRange, selectedSite, selectedSiteGroup, selectedWlan]);
 
-    return () => clearTimeout(timer);
-  }, [timeRange]);
+  const updateCollectionStats = () => {
+    const stats = sleDataCollectionService.getStats();
+    setCollectionStats(stats);
+  };
 
-  const loadServiceLevelData = async () => {
-    setLoading(true);
+  const handleStartCollection = () => {
+    sleDataCollectionService.startCollection();
+    setIsCollectionActive(true);
+    toast.success('SLE Data Collection Started', {
+      description: 'Collecting client data every minute to generate service level metrics',
+      duration: 3000
+    });
+    updateCollectionStats();
+  };
+
+  const handleStopCollection = () => {
+    sleDataCollectionService.stopCollection();
+    setIsCollectionActive(false);
+    toast.info('SLE Data Collection Stopped', {
+      description: 'Data collection has been paused',
+      duration: 2000
+    });
+    updateCollectionStats();
+  };
+
+  const handleClearData = () => {
+    sleDataCollectionService.clearData();
+    setTimeSeriesData([]);
+    toast.success('SLE Data Cleared', {
+      description: 'All collected service level data has been cleared',
+      duration: 2000
+    });
+    updateCollectionStats();
+  };
+
+  const loadFilterOptions = async () => {
+    setIsLoadingFilters(true);
     try {
-      // Load data with individual error handling to prevent complete failure
-      await Promise.allSettled([
-        loadMetrics().catch(err => console.warn('Metrics loading failed:', err)),
-        loadSLATargets().catch(err => console.warn('SLA targets loading failed:', err)),
-        loadIncidents().catch(err => console.warn('Incidents loading failed:', err)),
-        loadHistoricalData().catch(err => console.warn('Historical data loading failed:', err))
-      ]);
+      // Load sites
+      const sitesResponse = await apiService.makeAuthenticatedRequest('/v1/sites', {
+        method: 'GET'
+      });
+      
+      if (sitesResponse.ok) {
+        const sitesData = await sitesResponse.json();
+        if (Array.isArray(sitesData)) {
+          setSites(sitesData.map((site: any) => ({
+            id: site.id || site.siteId,
+            name: site.name || site.siteName || 'Unnamed Site'
+          })));
+        }
+      }
+
+      // Load networks (WLANs)
+      const networksResponse = await apiService.makeAuthenticatedRequest('/v1/networks', {
+        method: 'GET'
+      });
+      
+      if (networksResponse.ok) {
+        const networksData = await networksResponse.json();
+        if (Array.isArray(networksData)) {
+          setNetworks(networksData
+            .filter((net: any) => net.type === 'employee' || net.type === 'guest')
+            .map((net: any) => ({
+              id: net.id,
+              name: net.name,
+              ssid: net.ssid
+            })));
+        }
+      }
+
+      // Note: Site groups may not be available in all API versions
+      setSiteGroups([]);
+      
     } catch (error) {
-      console.error('Error loading service level data:', error);
-      toast.error('Some service level data could not be loaded');
+      // Silently handle timeout errors - Extreme Platform ONE may be slow
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (!errorMessage.includes('timeout') && !errorMessage.includes('timed out')) {
+        console.error('Error loading filter options:', error);
+      }
     } finally {
-      setLoading(false);
+      setIsLoadingFilters(false);
     }
   };
 
-  const loadMetrics = async () => {
+  const loadMetricsData = () => {
+    setIsLoading(true);
     try {
-      // Load metrics with timeout and fallback data
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timeout')), 10000)
-      );
-
-      let devices: any = { data: [] };
-      let sites: any = { data: [] };
+      // Calculate time range
+      const range = TIME_RANGES.find(r => r.value === timeRange);
+      const days = range?.days || 1;
+      const end = Date.now();
+      const start = end - days * 24 * 60 * 60 * 1000;
       
-      // Try to load devices data with timeout
-      try {
-        const devicesResponse = await Promise.race([
-          apiService.makeAuthenticatedRequest('/v1/devices'),
-          timeoutPromise
-        ]) as Response;
-        
-        if (devicesResponse.ok) {
-          devices = await devicesResponse.json();
-        }
-      } catch (error) {
-        console.warn('Devices API not available, using fallback data');
+      setStartTimestamp(start);
+      setEndTimestamp(end);
+      setCursorTimestamp(end);
+
+      // If no metrics selected, clear data
+      if (selectedMetrics.length === 0) {
+        setTimeSeriesData([]);
+        return;
       }
 
-      // Try to load sites data with timeout
-      try {
-        const sitesResponse = await Promise.race([
-          apiService.makeAuthenticatedRequest('/v1/sites'),
-          timeoutPromise
-        ]) as Response;
-        
-        if (sitesResponse.ok) {
-          sites = await sitesResponse.json();
-        }
-      } catch (error) {
-        console.warn('Sites API not available, using fallback data');
-      }
-      
-      // Calculate derived metrics with fallback values
-      const totalDevices = devices.data?.length || 12; // Fallback for demo
-      const onlineDevices = devices.data?.filter((d: any) => d.status === 'online')?.length || 11;
-      const availabilityPercent = totalDevices > 0 ? (onlineDevices / totalDevices) * 100 : 99.2;
-      
-      const calculatedMetrics: ServiceLevelMetric[] = [
-        {
-          id: 'network-availability',
-          name: 'Network Availability',
-          currentValue: availabilityPercent,
-          target: 99.9,
-          unit: '%',
-          status: availabilityPercent >= 99.5 ? 'healthy' : availabilityPercent >= 99 ? 'warning' : 'critical',
-          trend: 'stable',
-          lastUpdated: new Date().toISOString()
-        },
-        {
-          id: 'response-time',
-          name: 'Average Response Time',
-          currentValue: 15 + Math.random() * 5, // Simulated with slight variation
-          target: 20,
-          unit: 'ms',
-          status: 'healthy',
-          trend: 'stable',
-          lastUpdated: new Date().toISOString()
-        },
-        {
-          id: 'throughput',
-          name: 'Network Throughput',
-          currentValue: 85 + Math.random() * 10,
-          target: 80,
-          unit: '%',
-          status: 'healthy',
-          trend: 'up',
-          lastUpdated: new Date().toISOString()
-        },
-        {
-          id: 'error-rate',
-          name: 'Error Rate',
-          currentValue: 0.3 + Math.random() * 0.4,
-          target: 1.0,
-          unit: '%',
-          status: 'healthy',
-          trend: 'down',
-          lastUpdated: new Date().toISOString()
-        }
-      ];
-      
-      setMetrics(calculatedMetrics);
+      // Get filtered data from the collection service
+      const data = sleDataCollectionService.getFilteredData({
+        siteId: selectedSite,
+        scope: scope,
+        metricKeys: selectedMetrics,
+        startTimestamp: start,
+        endTimestamp: end
+      });
+
+      setTimeSeriesData(data);
+      console.log(`[Service Levels] Loaded ${data.length} data points`);
     } catch (error) {
-      console.error('Error loading metrics:', error);
-      // Set default metrics on error
-      setDefaultMetrics();
+      console.error('[Service Levels] Error loading metrics data:', error);
+      setTimeSeriesData([]);
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const setDefaultMetrics = () => {
-    const defaultMetrics: ServiceLevelMetric[] = [
-      {
-        id: 'network-availability',
-        name: 'Network Availability',
-        currentValue: 99.2,
-        target: 99.9,
-        unit: '%',
-        status: 'warning',
-        trend: 'stable',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'response-time',
-        name: 'Average Response Time',
-        currentValue: 18,
-        target: 20,
-        unit: 'ms',
-        status: 'healthy',
-        trend: 'stable',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'throughput',
-        name: 'Network Throughput',
-        currentValue: 87,
-        target: 80,
-        unit: '%',
-        status: 'healthy',
-        trend: 'up',
-        lastUpdated: new Date().toISOString()
-      },
-      {
-        id: 'error-rate',
-        name: 'Error Rate',
-        currentValue: 0.6,
-        target: 1.0,
-        unit: '%',
-        status: 'healthy',
-        trend: 'down',
-        lastUpdated: new Date().toISOString()
-      }
-    ];
-    setMetrics(defaultMetrics);
+  const handleScopeChange = (newScope: string) => {
+    setScope(newScope as 'wireless' | 'wired' | 'wan');
   };
 
-  const loadSLATargets = async () => {
-    // Define standard SLA targets for network infrastructure
-    const targets: SLATarget[] = [
-      { name: 'Network Uptime', target: 99.9, current: 99.7, unit: '%', category: 'availability' },
-      { name: 'Mean Time to Repair', target: 4, current: 2.8, unit: 'hours', category: 'performance' },
-      { name: 'Response Time', target: 20, current: 15, unit: 'ms', category: 'performance' },
-      { name: 'Packet Loss', target: 0.1, current: 0.05, unit: '%', category: 'quality' },
-      { name: 'Jitter', target: 5, current: 2.3, unit: 'ms', category: 'quality' },
-      { name: 'Bandwidth Utilization', target: 80, current: 72, unit: '%', category: 'performance' }
-    ];
-    setSlaTargets(targets);
-  };
-
-  const loadIncidents = async () => {
-    try {
-      // Try to get alerts/events data with timeout
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timeout')), 8000)
-      );
-
-      try {
-        const alertsResponse = await Promise.race([
-          apiService.makeAuthenticatedRequest('/v1/alerts'),
-          timeoutPromise
-        ]) as Response;
-        
-        if (alertsResponse.ok) {
-          const alerts = await alertsResponse.json();
-          
-          const serviceIncidents: ServiceIncident[] = alerts.data?.slice(0, 5).map((alert: any, index: number) => ({
-            id: `incident-${index}`,
-            severity: alert.severity?.toLowerCase() || 'medium',
-            title: alert.message || `Service Issue ${index + 1}`,
-            description: alert.description || 'Network service disruption detected',
-            startTime: alert.timestamp || new Date().toISOString(),
-            endTime: Math.random() > 0.3 ? new Date(Date.now() - Math.random() * 3600000).toISOString() : undefined,
-            affectedServices: ['Network Access', 'Wi-Fi Services'],
-            status: Math.random() > 0.3 ? 'resolved' : 'active'
-          })) || [];
-          
-          setIncidents(serviceIncidents);
-          return;
-        }
-      } catch (error) {
-        console.warn('Alerts API not available, using sample data');
-      }
-
-      // Fallback to sample incident data
-      const sampleIncidents: ServiceIncident[] = [
-        {
-          id: 'incident-1',
-          severity: 'medium',
-          title: 'Intermittent Wi-Fi Connectivity',
-          description: 'Some users experiencing intermittent Wi-Fi disconnections in Building A',
-          startTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
-          endTime: new Date(Date.now() - 30 * 60 * 1000).toISOString(), // 30 minutes ago
-          affectedServices: ['Wi-Fi Services', 'Guest Network'],
-          status: 'resolved'
-        },
-        {
-          id: 'incident-2',
-          severity: 'low',
-          title: 'Scheduled Maintenance',
-          description: 'Planned network maintenance for core switches',
-          startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // Tomorrow
-          affectedServices: ['Network Infrastructure'],
-          status: 'investigating'
-        }
-      ];
-      
-      setIncidents(sampleIncidents);
-    } catch (error) {
-      console.error('Error loading incidents:', error);
-      setIncidents([]); // Set empty array on error
+  const handleTimeRangeChange = (newRange: string) => {
+    setTimeRange(newRange);
+    const range = TIME_RANGES.find(r => r.value === newRange);
+    if (range) {
+      const end = Date.now();
+      const start = end - range.days * 24 * 60 * 60 * 1000;
+      setStartTimestamp(start);
+      setEndTimestamp(end);
+      setCursorTimestamp(end);
     }
   };
 
-  const loadHistoricalData = async () => {
-    try {
-      // Generate sample historical data for trending (no API call needed)
-      const now = new Date();
-      const data = [];
-      
-      for (let i = 23; i >= 0; i--) {
-        const time = new Date(now.getTime() - i * 60 * 60 * 1000);
-        data.push({
-          time: time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          availability: Math.max(98, 99.5 + (Math.random() - 0.5) * 1),
-          responseTime: Math.max(5, 15 + (Math.random() - 0.5) * 10),
-          throughput: Math.max(60, 85 + (Math.random() - 0.5) * 20),
-          errorRate: Math.max(0, Math.random() * 1.2)
-        });
-      }
-      
-      setHistoricalData(data);
-    } catch (error) {
-      console.error('Error generating historical data:', error);
-      setHistoricalData([]);
-    }
+  const handleCursorChange = (value: number[]) => {
+    setCursorTimestamp(value[0]);
   };
 
-  const getSLAStatus = (current: number, target: number, category: string) => {
-    const ratio = category === 'availability' || category === 'performance' 
-      ? current / target 
-      : target / current; // For metrics like error rate where lower is better
+  const formatTimestamp = (ts: number) => {
+    return new Date(ts).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const getCurrentMetricValues = (): SLEMetric[] => {
+    const currentData = timeSeriesData.filter(d => d.timestamp <= cursorTimestamp);
     
-    if (ratio >= 0.95) return 'healthy';
-    if (ratio >= 0.90) return 'warning';
-    return 'critical';
+    return selectedMetrics.map(metricKey => {
+      const metricDef = METRIC_CATALOG[scope].find(m => m.key === metricKey);
+      if (!metricDef) return null;
+
+      const metricData = currentData.filter(d => d.metric_key === metricKey);
+      if (metricData.length === 0) {
+        return {
+          key: metricKey,
+          name: metricDef.name,
+          currentValue: 0,
+          threshold: 0,
+          status: 'critical' as const,
+          trend: 'stable' as const,
+          unit: metricDef.unit
+        };
+      }
+
+      const latestPoint = metricData[metricData.length - 1];
+      const previousPoint = metricData.length > 1 ? metricData[metricData.length - 2] : null;
+
+      let trend: 'up' | 'down' | 'stable' = 'stable';
+      if (previousPoint) {
+        const change = latestPoint.value - previousPoint.value;
+        if (Math.abs(change) > latestPoint.value * 0.05) {
+          trend = change > 0 ? 'up' : 'down';
+        }
+      }
+
+      let status: 'healthy' | 'warning' | 'critical' = 'healthy';
+      if (metricDef.unit.includes('percent')) {
+        if (latestPoint.value < 80) status = 'warning';
+        if (latestPoint.value < 60) status = 'critical';
+      } else if (metricDef.unit === 'seconds') {
+        if (latestPoint.value > 5) status = 'warning';
+        if (latestPoint.value > 10) status = 'critical';
+      } else if (metricDef.unit === 'severity_score_1_to_5') {
+        if (latestPoint.value > 2.5) status = 'warning';
+        if (latestPoint.value > 3.5) status = 'critical';
+      }
+
+      return {
+        key: metricKey,
+        name: metricDef.name,
+        currentValue: latestPoint.value,
+        threshold: 0,
+        status,
+        trend,
+        unit: metricDef.unit
+      };
+    }).filter(Boolean) as SLEMetric[];
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'healthy': return 'text-green-500';
-      case 'warning': return 'text-yellow-500';
-      case 'critical': return 'text-red-500';
-      default: return 'text-gray-500';
+  const getChartData = () => {
+    const timestamps = [...new Set(timeSeriesData.map(d => d.timestamp))].sort();
+    return timestamps.map(ts => {
+      const point: any = { timestamp: ts };
+      selectedMetrics.forEach(metricKey => {
+        const dataPoint = timeSeriesData.find(d => d.timestamp === ts && d.metric_key === metricKey);
+        if (dataPoint) {
+          point[metricKey] = dataPoint.value;
+        }
+      });
+      return point;
+    });
+  };
+
+  const getFilteredDataForTable = () => {
+    return timeSeriesData
+      .filter(d => d.timestamp <= cursorTimestamp)
+      .sort((a, b) => b.timestamp - a.timestamp)
+      .slice(0, 100);
+  };
+
+  const getMetricColor = (metricKey: string, index: number) => {
+    const colors = ['#BB86FC', '#03DAC5', '#FFB74D', '#CF6679', '#81C784', '#64B5F6', '#FFD54F'];
+    return colors[index % colors.length];
+  };
+
+  const getScopeIcon = (scopeValue: string) => {
+    switch (scopeValue) {
+      case 'wireless': return <Wifi className="h-4 w-4" />;
+      case 'wired': return <Cable className="h-4 w-4" />;
+      case 'wan': return <Globe className="h-4 w-4" />;
+      default: return <Activity className="h-4 w-4" />;
     }
   };
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'healthy': return <CheckCircle className="h-4 w-4" />;
-      case 'warning': return <AlertTriangle className="h-4 w-4" />;
-      case 'critical': return <XCircle className="h-4 w-4" />;
-      default: return <Activity className="h-4 w-4" />;
+      case 'healthy': return <CheckCircle2 className="h-4 w-4 text-success" />;
+      case 'warning': return <AlertCircle className="h-4 w-4 text-warning" />;
+      case 'critical': return <XCircle className="h-4 w-4 text-destructive" />;
+      default: return <Minus className="h-4 w-4 text-muted-foreground" />;
     }
   };
 
-  const exportData = () => {
-    const data = {
-      metrics,
-      slaTargets,
-      incidents,
-      exportTime: new Date().toISOString()
-    };
-    
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `service-levels-${new Date().toISOString().split('T')[0]}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-    
-    toast.success('Service level data exported successfully');
+  const getTrendIcon = (trend: string) => {
+    switch (trend) {
+      case 'up': return <TrendingUp className="h-4 w-4 text-green-500" />;
+      case 'down': return <TrendingDown className="h-4 w-4 text-red-500" />;
+      default: return <Minus className="h-4 w-4 text-muted-foreground" />;
+    }
   };
 
-  if (loading) {
+  const currentMetrics = getCurrentMetricValues();
+  const showEmptyState = !isLoading && timeSeriesData.length === 0;
+
+  if (isLoading && timeSeriesData.length === 0) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <h1>Service Levels</h1>
-          <div className="flex items-center space-x-2">
-            <RefreshCcw className="h-4 w-4 animate-spin" />
-            <span>Loading service data...</span>
-          </div>
-        </div>
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          {[...Array(4)].map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <div className="h-4 bg-muted rounded w-24"></div>
-                <div className="h-4 w-4 bg-muted rounded"></div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <Card key={i}>
+              <CardHeader>
+                <Skeleton className="h-4 w-20" />
               </CardHeader>
               <CardContent>
-                <div className="h-8 bg-muted rounded w-16 mb-2"></div>
-                <div className="h-3 bg-muted rounded w-32"></div>
+                <Skeleton className="h-8 w-16" />
               </CardContent>
             </Card>
           ))}
         </div>
+        <Card>
+          <CardHeader>
+            <Skeleton className="h-6 w-32" />
+          </CardHeader>
+          <CardContent>
+            <Skeleton className="h-64 w-full" />
+          </CardContent>
+        </Card>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1>Service Levels</h1>
-          <p className="text-muted-foreground">
-            Monitor SLA performance and service quality metrics
-          </p>
-        </div>
-        <div className="flex items-center space-x-2">
-          <Button variant="outline" size="sm" onClick={exportData}>
-            <Download className="h-4 w-4 mr-2" />
-            Export Data
-          </Button>
-          <Button variant="outline" size="sm" onClick={loadServiceLevelData}>
-            <RefreshCcw className="h-4 w-4 mr-2" />
-            Refresh
-          </Button>
-        </div>
-      </div>
-
-      {/* Key Metrics Overview */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {metrics.map((metric) => (
-          <Card key={metric.id}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{metric.name}</CardTitle>
-              <div className={getStatusColor(metric.status)}>
-                {getStatusIcon(metric.status)}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {metric.currentValue.toFixed(metric.unit === '%' ? 1 : 0)}{metric.unit}
-              </div>
-              <div className="flex items-center space-x-2 text-xs text-muted-foreground">
-                <span>Target: {metric.target}{metric.unit}</span>
-                {metric.trend === 'up' && <TrendingUp className="h-3 w-3 text-green-500" />}
-                {metric.trend === 'down' && <TrendingDown className="h-3 w-3 text-red-500" />}
-              </div>
-              <Progress 
-                value={(metric.currentValue / metric.target) * 100} 
-                className="mt-2" 
-              />
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-
-      {/* Detailed Views */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
-        <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="sla-targets">SLA Targets</TabsTrigger>
-          <TabsTrigger value="incidents">Incidents</TabsTrigger>
-          <TabsTrigger value="historical">Historical Data</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-4">
-          <div className="grid gap-6 md:grid-cols-2">
-            {/* Service Status Distribution */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Service Status Distribution</CardTitle>
-                <CardDescription>Current status across all monitored services</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={200}>
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: 'Healthy', value: metrics.filter(m => m.status === 'healthy').length, fill: '#10b981' },
-                        { name: 'Warning', value: metrics.filter(m => m.status === 'warning').length, fill: '#f59e0b' },
-                        { name: 'Critical', value: metrics.filter(m => m.status === 'critical').length, fill: '#ef4444' }
-                      ]}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={40}
-                      outerRadius={80}
-                      dataKey="value"
-                    >
-                      {[
-                        { name: 'Healthy', value: metrics.filter(m => m.status === 'healthy').length, fill: '#10b981' },
-                        { name: 'Warning', value: metrics.filter(m => m.status === 'warning').length, fill: '#f59e0b' },
-                        { name: 'Critical', value: metrics.filter(m => m.status === 'critical').length, fill: '#ef4444' }
-                      ].map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.fill} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Recent Performance Trend */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Performance Trend (24h)</CardTitle>
-                <CardDescription>Network availability and response time</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={historicalData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="availability" stroke="#8884d8" name="Availability %" />
-                    <Line type="monotone" dataKey="responseTime" stroke="#82ca9d" name="Response Time (ms)" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+    <div className="space-y-8">
+      {/* Real-Time Data Collection Banner */}
+      <Alert className="bg-info/10 border-info/30">
+        <Database className="h-5 w-5 text-info" />
+        <AlertDescription className="ml-2 flex items-center justify-between w-full">
+          <div>
+            <strong className="font-semibold">Live SLE Data Collection:</strong> Metrics calculated from real client data polled every minute from the Extreme Platform ONE API.
+            {collectionStats && (
+              <span className="text-sm ml-2">
+                ({collectionStats.totalDataPoints} data points • {collectionStats.sitesMonitored} sites)
+              </span>
+            )}
           </div>
-        </TabsContent>
+          <div className="flex items-center gap-2">
+            {isCollectionActive ? (
+              <Button onClick={handleStopCollection} variant="outline" size="sm" className="gap-2">
+                <Pause className="h-4 w-4" />
+                Pause
+              </Button>
+            ) : (
+              <Button onClick={handleStartCollection} variant="default" size="sm" className="gap-2">
+                <Play className="h-4 w-4" />
+                Start Collection
+              </Button>
+            )}
+            <Button onClick={handleClearData} variant="destructive" size="sm">
+              Clear Data
+            </Button>
+          </div>
+        </AlertDescription>
+      </Alert>
 
-        <TabsContent value="sla-targets" className="space-y-4">
-          <div className="grid gap-4">
-            {['availability', 'performance', 'quality'].map((category) => (
-              <Card key={category}>
-                <CardHeader>
-                  <CardTitle className="capitalize">{category} SLA Targets</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-4">
-                    {slaTargets.filter(target => target.category === category).map((target) => {
-                      const status = getSLAStatus(target.current, target.target, target.category);
-                      const percentage = target.category === 'availability' || target.category === 'performance' 
-                        ? (target.current / target.target) * 100
-                        : (target.target / target.current) * 100;
-                      
-                      return (
-                        <div key={target.name} className="flex items-center justify-between p-3 border rounded-lg">
-                          <div className="flex items-center space-x-3">
-                            <div className={getStatusColor(status)}>
-                              {getStatusIcon(status)}
-                            </div>
-                            <div>
-                              <div className="font-medium">{target.name}</div>
-                              <div className="text-sm text-muted-foreground">
-                                Current: {target.current}{target.unit} | Target: {target.target}{target.unit}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <Badge variant={status === 'healthy' ? 'default' : status === 'warning' ? 'secondary' : 'destructive'}>
-                              {percentage.toFixed(1)}%
-                            </Badge>
-                          </div>
-                        </div>
-                      );
-                    })}
+      {/* Modern Header with Gradient */}
+      <div className="relative">
+        <div className="absolute inset-0 bg-gradient-to-r from-primary/20 via-secondary/20 to-primary/20 blur-3xl opacity-30 -z-10" />
+        <div className="flex justify-between items-start">
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <div className="p-3 rounded-xl bg-primary/10 border border-primary/20">
+                <BarChart3 className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm text-muted-foreground font-medium uppercase tracking-wider">
+                  Network Intelligence
+                </p>
+                <p className="text-muted-foreground/80 mt-1">
+                  Real-time service level monitoring with historical network rewind
+                </p>
+              </div>
+            </div>
+          </div>
+          <Button 
+            onClick={loadMetricsData} 
+            variant="outline" 
+            size="sm" 
+            disabled={isLoading}
+            className="gap-2"
+          >
+            <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+            Refresh Data
+          </Button>
+        </div>
+      </div>
+
+      {/* Filters Bar */}
+      <Card className="surface-2dp border-primary/10 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-secondary/5 pointer-events-none" />
+        <CardHeader className="relative">
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-primary" />
+            Scope & Filters
+          </CardTitle>
+          <CardDescription>
+            Configure monitoring parameters, sites, and time ranges
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="relative space-y-6">
+          {/* Primary Filters Row */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Scope Selector */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground/90 flex items-center gap-2">
+                <Zap className="h-3.5 w-3.5 text-primary" />
+                Network Scope
+              </label>
+              <Select value={scope} onValueChange={handleScopeChange}>
+                <SelectTrigger className="border-primary/20 hover:border-primary/40 transition-colors">
+                  <div className="flex items-center gap-2">
+                    {getScopeIcon(scope)}
+                    <SelectValue />
                   </div>
-                </CardContent>
-              </Card>
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="wireless">
+                    Wireless ({METRIC_CATALOG.wireless.length} metrics)
+                  </SelectItem>
+                  <SelectItem value="wired">
+                    Wired ({METRIC_CATALOG.wired.length} metrics)
+                  </SelectItem>
+                  <SelectItem value="wan">
+                    WAN ({METRIC_CATALOG.wan.length} metric)
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Rollup Selector */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground/90 flex items-center gap-2">
+                <BarChart3 className="h-3.5 w-3.5 text-secondary" />
+                Data Rollup
+              </label>
+              <Select value={rollup} onValueChange={setRollup}>
+                <SelectTrigger className="border-secondary/20 hover:border-secondary/40 transition-colors">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ROLLUP_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Time Range Selector */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground/90 flex items-center gap-2">
+                <Calendar className="h-3.5 w-3.5 text-warning" />
+                Time Range
+              </label>
+              <Select value={timeRange} onValueChange={handleTimeRangeChange}>
+                <SelectTrigger className="border-warning/20 hover:border-warning/40 transition-colors">
+                  <Calendar className="mr-2 h-4 w-4" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {TIME_RANGES.map((range) => (
+                    <SelectItem key={range.value} value={range.value}>
+                      {range.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          {/* Secondary Filters Row - Site, Site Group, WLAN */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4 border-t border-border/50">
+            {/* Site Selector */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground/90 flex items-center gap-2">
+                <MapPin className="h-3.5 w-3.5 text-info" />
+                Site
+              </label>
+              <Select 
+                value={selectedSite} 
+                onValueChange={setSelectedSite}
+                disabled={isLoadingFilters}
+              >
+                <SelectTrigger className="border-info/20 hover:border-info/40 transition-colors">
+                  <SelectValue placeholder="All Sites" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Sites</SelectItem>
+                  {sites.map((site) => (
+                    <SelectItem key={site.id} value={site.id}>
+                      {site.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Site Group Selector */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground/90 flex items-center gap-2">
+                <FolderTree className="h-3.5 w-3.5 text-success" />
+                Site Group
+              </label>
+              <Select 
+                value={selectedSiteGroup} 
+                onValueChange={setSelectedSiteGroup}
+                disabled={isLoadingFilters || siteGroups.length === 0}
+              >
+                <SelectTrigger className="border-success/20 hover:border-success/40 transition-colors">
+                  <SelectValue placeholder="All Site Groups" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Site Groups</SelectItem>
+                  {siteGroups.map((group) => (
+                    <SelectItem key={group.id} value={group.id}>
+                      {group.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* WLAN Selector */}
+            <div className="space-y-3">
+              <label className="text-sm font-medium text-foreground/90 flex items-center gap-2">
+                <Radio className="h-3.5 w-3.5 text-secondary" />
+                WLAN {scope !== 'wireless' && <span className="text-xs text-muted-foreground">(Wireless only)</span>}
+              </label>
+              <Select 
+                value={selectedWlan} 
+                onValueChange={setSelectedWlan}
+                disabled={isLoadingFilters || scope !== 'wireless'}
+              >
+                <SelectTrigger className="border-secondary/20 hover:border-secondary/40 transition-colors">
+                  <SelectValue placeholder="All WLANs" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All WLANs</SelectItem>
+                  {networks.map((network) => (
+                    <SelectItem key={network.id} value={network.id}>
+                      {network.name} {network.ssid && `(${network.ssid})`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Empty State */}
+      {showEmptyState && (
+        <Card className="surface-1dp border-primary/10">
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <div className="p-4 rounded-full bg-muted/20 mb-4">
+              <BarChart3 className="h-12 w-12 text-muted-foreground" />
+            </div>
+            <h3 className="text-xl font-semibold mb-2">No Metrics Data Available</h3>
+            <p className="text-muted-foreground text-center max-w-md mb-6">
+              {isCollectionActive 
+                ? 'Waiting for data collection... First metrics will appear after 1 minute.'
+                : 'Click "Start Collection" above to begin polling client data and generating service level metrics.'}
+            </p>
+            {!isCollectionActive && (
+              <Button onClick={handleStartCollection} variant="default" className="gap-2">
+                <Play className="h-4 w-4" />
+                Start Data Collection
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Network Rewind Slider */}
+      {!showEmptyState && (
+      <Card className="surface-2dp border-primary/10 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-secondary/5 pointer-events-none" />
+        <CardHeader className="relative">
+          <CardTitle className="flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-primary/10 border border-primary/20">
+              <Clock className="h-4 w-4 text-primary" />
+            </div>
+            Network Rewind
+          </CardTitle>
+          <CardDescription>
+            Viewing data up to: <strong className="text-primary">{formatTimestamp(cursorTimestamp)}</strong>
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="relative space-y-6">
+          <div className="px-2">
+            <Slider
+              value={[cursorTimestamp]}
+              min={startTimestamp}
+              max={endTimestamp}
+              step={ROLLUP_OPTIONS.find(r => r.value === rollup)?.ms || 60 * 1000}
+              onValueChange={handleCursorChange}
+              className="w-full"
+            />
+          </div>
+
+          <div className="flex justify-between items-center text-xs">
+            <div className="flex flex-col">
+              <span className="text-muted-foreground uppercase tracking-wider mb-1">Start</span>
+              <span className="font-mono font-medium">{formatTimestamp(startTimestamp)}</span>
+            </div>
+            <div className="flex flex-col text-right">
+              <span className="text-muted-foreground uppercase tracking-wider mb-1">End</span>
+              <span className="font-mono font-medium">{formatTimestamp(endTimestamp)}</span>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCursorTimestamp(startTimestamp)}
+              className="flex-1 gap-2"
+            >
+              <TrendingDown className="h-3.5 w-3.5" />
+              Jump to Start
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setCursorTimestamp(endTimestamp)}
+              className="flex-1 gap-2"
+            >
+              <TrendingUp className="h-3.5 w-3.5" />
+              Jump to End
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+      )}
+
+      {/* Current Metrics Summary */}
+      {!showEmptyState && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="h-8 w-1 bg-gradient-to-b from-primary to-secondary rounded-full" />
+              <div>
+                <h3 className="font-semibold">Live Metrics</h3>
+                <p className="text-sm text-muted-foreground">
+                  Real-time status for {currentMetrics.length} {scope} metrics
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+            {currentMetrics.map((metric, index) => (
+              <div 
+                key={metric.key} 
+                className="group relative overflow-hidden border rounded-xl p-5 surface-2dp hover:surface-4dp transition-all duration-300 hover:scale-[1.02] hover:shadow-lg"
+              >
+                <div 
+                  className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                  style={{
+                    background: `linear-gradient(135deg, ${getMetricColor(metric.key, index)}15 0%, transparent 100%)`
+                  }}
+                />
+                
+                <div className="relative space-y-3">
+                  <div className="flex items-start justify-between">
+                    <div className="space-y-1 flex-1">
+                      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        {metric.name}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {getTrendIcon(metric.trend)}
+                      {getStatusIcon(metric.status)}
+                    </div>
+                  </div>
+
+                  <div className="flex items-baseline gap-2">
+                    <span 
+                      className="text-3xl font-bold tracking-tight"
+                      style={{ color: getMetricColor(metric.key, index) }}
+                    >
+                      {metric.currentValue.toFixed(2)}
+                    </span>
+                    <span className="text-sm text-muted-foreground font-medium">
+                      {metric.unit.includes('percent') ? '%' : metric.unit === 'Mbps' ? 'Mbps' : metric.unit === 'seconds' ? 's' : ''}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <Badge 
+                      variant={metric.status === 'healthy' ? 'default' : metric.status === 'warning' ? 'secondary' : 'destructive'}
+                      className="text-xs"
+                    >
+                      {metric.status === 'healthy' ? 'Healthy' : metric.status === 'warning' ? 'Warning' : 'Critical'}
+                    </Badge>
+                  </div>
+
+                  <div className="absolute bottom-0 left-0 right-0 h-1 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full transition-all duration-500"
+                      style={{
+                        width: `${metric.status === 'healthy' ? 100 : metric.status === 'warning' ? 60 : 30}%`,
+                        background: `linear-gradient(90deg, ${getMetricColor(metric.key, index)}, ${getMetricColor(metric.key, index)}80)`
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
-        </TabsContent>
+        </div>
+      )}
 
-        <TabsContent value="incidents" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Service Incidents</CardTitle>
-              <CardDescription>Track and manage service disruptions</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {incidents.length === 0 ? (
-                  <div className="text-center py-8 text-muted-foreground">
-                    <CheckCircle className="h-12 w-12 mx-auto mb-2 text-green-500" />
-                    <p>No active incidents</p>
-                    <p className="text-sm">All services are operating normally</p>
-                  </div>
-                ) : (
-                  incidents.map((incident) => (
-                    <Alert key={incident.id} className={
-                      incident.severity === 'critical' ? 'border-red-500' :
-                      incident.severity === 'high' ? 'border-orange-500' :
-                      incident.severity === 'medium' ? 'border-yellow-500' : 'border-blue-500'
-                    }>
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-start space-x-3">
-                          <AlertTriangle className={`h-4 w-4 mt-0.5 ${
-                            incident.severity === 'critical' ? 'text-red-500' :
-                            incident.severity === 'high' ? 'text-orange-500' :
-                            incident.severity === 'medium' ? 'text-yellow-500' : 'text-blue-500'
-                          }`} />
-                          <div className="flex-1">
-                            <div className="flex items-center space-x-2 mb-1">
-                              <span className="font-medium">{incident.title}</span>
-                              <Badge variant={incident.status === 'resolved' ? 'default' : 'destructive'}>
-                                {incident.status}
-                              </Badge>
-                            </div>
-                            <AlertDescription>{incident.description}</AlertDescription>
-                            <div className="flex items-center space-x-4 mt-2 text-xs text-muted-foreground">
-                              <span>Started: {new Date(incident.startTime).toLocaleString()}</span>
-                              {incident.endTime && (
-                                <span>Resolved: {new Date(incident.endTime).toLocaleString()}</span>
-                              )}
-                              <span>Services: {incident.affectedServices.join(', ')}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </Alert>
-                  ))
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="historical" className="space-y-4">
-          <div className="grid gap-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Historical Performance Metrics</CardTitle>
-                <CardDescription>24-hour trending data for key performance indicators</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <AreaChart data={historicalData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Area type="monotone" dataKey="availability" stackId="1" stroke="#8884d8" fill="#8884d8" name="Availability %" />
-                    <Area type="monotone" dataKey="throughput" stackId="2" stroke="#82ca9d" fill="#82ca9d" name="Throughput %" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Error Rate & Response Time Trends</CardTitle>
-                <CardDescription>Monitor service quality over time</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={historicalData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="errorRate" fill="#ef4444" name="Error Rate %" />
-                    <Bar dataKey="responseTime" fill="#3b82f6" name="Response Time (ms)" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+      {/* Metrics Chart */}
+      {!showEmptyState && (
+      <Card className="surface-1dp border-primary/10 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-br from-secondary/5 via-transparent to-primary/5 pointer-events-none" />
+        <CardHeader className="relative">
+          <CardTitle className="flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-secondary/10 border border-secondary/20">
+              <Activity className="h-4 w-4 text-secondary" />
+            </div>
+            Performance Trends
+          </CardTitle>
+          <CardDescription>
+            Historical analysis of {selectedMetrics.length} {scope} metrics with network rewind cursor
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="relative">
+          <div className="h-[400px] mt-4">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={getChartData()}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,252,0.1)" />
+                <XAxis
+                  dataKey="timestamp"
+                  tickFormatter={(ts) => new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}
+                  stroke="rgba(255,255,252,0.6)"
+                  style={{ fontSize: '12px' }}
+                />
+                <YAxis
+                  stroke="rgba(255,255,252,0.6)"
+                  style={{ fontSize: '12px' }}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: '#1e1e1e',
+                    border: '1px solid rgba(187, 134, 252, 0.3)',
+                    borderRadius: '8px',
+                    color: '#fff'
+                  }}
+                  labelFormatter={(ts) => new Date(ts as number).toLocaleString()}
+                />
+                <Legend />
+                {selectedMetrics.map((metricKey, index) => {
+                  const metric = METRIC_CATALOG[scope].find(m => m.key === metricKey);
+                  return (
+                    <Line
+                      key={metricKey}
+                      type="monotone"
+                      dataKey={metricKey}
+                      name={metric?.name || metricKey}
+                      stroke={getMetricColor(metricKey, index)}
+                      strokeWidth={2}
+                      dot={false}
+                      activeDot={{ r: 6 }}
+                    />
+                  );
+                })}
+                <ReferenceLine
+                  x={cursorTimestamp}
+                  stroke="#BB86FC"
+                  strokeWidth={2}
+                  strokeDasharray="5 5"
+                  label={{ 
+                    value: 'Cursor', 
+                    position: 'top', 
+                    fill: '#BB86FC',
+                    fontSize: 12,
+                    fontWeight: 600
+                  }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-        </TabsContent>
-      </Tabs>
+        </CardContent>
+      </Card>
+      )}
+
+      {/* Details Table */}
+      {!showEmptyState && (
+      <Card className="surface-1dp border-primary/10">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-warning/10 border border-warning/20">
+              <BarChart3 className="h-4 w-4 text-warning" />
+            </div>
+            Data Points
+          </CardTitle>
+          <CardDescription>
+            Detailed metric values up to cursor position (latest 100 entries)
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg overflow-hidden">
+            <Table>
+              <TableHeader>
+                <TableRow className="bg-muted/30">
+                  <TableHead className="font-semibold">Timestamp</TableHead>
+                  <TableHead className="font-semibold">Metric</TableHead>
+                  <TableHead className="font-semibold">Value</TableHead>
+                  <TableHead className="font-semibold">Unit</TableHead>
+                  <TableHead className="font-semibold">Scope</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {getFilteredDataForTable().map((point, index) => {
+                  const metric = METRIC_CATALOG[scope].find(m => m.key === point.metric_key);
+                  return (
+                    <TableRow 
+                      key={`${point.timestamp}-${point.metric_key}-${index}`}
+                      className="hover:bg-muted/20 transition-colors"
+                    >
+                      <TableCell className="font-mono text-xs">
+                        {formatTimestamp(point.timestamp)}
+                      </TableCell>
+                      <TableCell className="font-medium">
+                        {metric?.name || point.metric_key}
+                      </TableCell>
+                      <TableCell className="font-mono">
+                        {point.value.toFixed(2)}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs">
+                        {point.unit}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="text-xs">
+                          {point.scope}
+                        </Badge>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        </CardContent>
+      </Card>
+      )}
     </div>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, memo } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -8,10 +8,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { Play, Copy, Trash2, Filter, ChevronDown, ChevronRight, Code, Download, Upload, Book, Search } from 'lucide-react';
+import { Play, Copy, Trash2, Filter, Info, BarChart3 } from 'lucide-react';
+import { Alert, AlertDescription } from './ui/alert';
 import { apiService } from '../services/api';
-import { toast } from 'sonner';
+import { TopApplicationsDebug } from './TopApplicationsDebug';
 
 interface ApiRequest {
   id: string;
@@ -29,14 +29,7 @@ interface ApiResponse {
   duration: number;
 }
 
-interface EndpointInfo {
-  method: string;
-  endpoint: string;
-  description: string;
-}
-
-// Move categories outside component to prevent recreating on each render
-const endpointCategories: Record<string, EndpointInfo[]> = {
+const endpointCategories = {
   'Authentication & Authorization': [
     { method: 'POST', endpoint: '/v1/oauth2/token', description: 'Get OAuth2 access token' },
     { method: 'POST', endpoint: '/v1/oauth2/refreshToken', description: 'Refresh OAuth2 token' },
@@ -65,9 +58,9 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
   'Access Points': [
     { method: 'GET', endpoint: '/v1/aps', description: 'Get access points' },
     { method: 'GET', endpoint: '/v1/aps/query', description: 'Query access points' },
-    { method: 'GET', endpoint: '/v1/aps/query/visualize', description: 'Get AP query visualization' },
+    { method: 'GET', endpoint: '/v1/aps/query/visualize', description: 'Visualize AP query results' },
     { method: 'GET', endpoint: '/v1/aps/query/columns', description: 'Get AP query columns' },
-    { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/bssid0', description: 'Get AP primary BSSID services' },
+    { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/bssid0', description: 'Get AP BSSID0' },
     { method: 'GET', endpoint: '/v1/aps/adoptionrules', description: 'Get AP adoption rules' },
     { method: 'PUT', endpoint: '/v1/aps/adoptionrules', description: 'Update AP adoption rules' },
     { method: 'GET', endpoint: '/v1/aps/apbalance', description: 'Get AP balance settings' },
@@ -82,6 +75,7 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'PUT', endpoint: '/v1/aps/reboot', description: 'Reboot APs' },
     { method: 'PUT', endpoint: '/v1/aps/releasetocloud', description: 'Release APs to cloud' },
     { method: 'PUT', endpoint: '/v1/aps/assign', description: 'Assign APs' },
+    { method: 'PUT', endpoint: '/v1/aps/affinity', description: 'Set AP affinity' },
     { method: 'POST', endpoint: '/v1/aps/clone', description: 'Clone AP configuration' },
     { method: 'GET', endpoint: '/v1/aps/registration', description: 'Get AP registration' },
     { method: 'PUT', endpoint: '/v1/aps/registration', description: 'Update AP registration' },
@@ -108,10 +102,11 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'GET', endpoint: '/v1/ap/environment/{apSerialNumber}', description: 'Get AP environment' },
     { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/location', description: 'Get AP location' },
     { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/lldp', description: 'Get AP LLDP info' },
+    { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/alarms', description: 'Get AP alarms' },
+    { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/smartrf', description: 'Get AP Smart RF info' },
+    { method: 'PUT', endpoint: '/v1/aps/aploglevel', description: 'Set AP log level' },
     { method: 'GET', endpoint: '/v1/aps/ifstats/{apSerialNumber}', description: 'Get AP interface stats' },
     { method: 'GET', endpoint: '/v1/aps/ifstats', description: 'Get all AP interface stats' },
-    { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/report', description: 'Get AP report' },
-    { method: 'GET', endpoint: '/v1/aps/downloadtrace/{filename}', description: 'Download AP trace file' },
   ],
 
   'Certificate Management': [
@@ -132,46 +127,29 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'DELETE', endpoint: '/v3/sites/{siteId}', description: 'Delete site' },
     { method: 'POST', endpoint: '/v3/sites/clone/{siteId}', description: 'Clone site' },
     { method: 'GET', endpoint: '/v3/sites/{siteid}/stations', description: 'Get site stations' },
+    { method: 'GET', endpoint: '/v3/sites/{siteId}/smartrf', description: 'Get site Smart RF' },
+    { method: 'GET', endpoint: '/v1/sites/{siteId}/aps/report', description: 'Get site APs report' },
   ],
 
   'Stations & Clients': [
     { method: 'GET', endpoint: '/v1/stations', description: 'Get stations' },
     { method: 'POST', endpoint: '/v1/stations/disassociate', description: 'Disassociate stations' },
     { method: 'GET', endpoint: '/v1/stations/{macaddress}', description: 'Get specific station' },
-    { method: 'GET', endpoint: '/v1/stations/query', description: 'Query stations' },
-    { method: 'GET', endpoint: '/v1/stations/query/visualize', description: 'Get station query visualization' },
-    { method: 'GET', endpoint: '/v1/stations/query/columns', description: 'Get station query columns' },
+    { method: 'GET', endpoint: '/v1/stations/query', description: 'Query stations (v1)' },
+    { method: 'GET', endpoint: '/v2/stations/query', description: 'Query stations (v2)' },
+    { method: 'GET', endpoint: '/v1/stations/query/visualize', description: 'Visualize station query (v1)' },
+    { method: 'GET', endpoint: '/v2/stations/query/visualize', description: 'Visualize station query (v2)' },
+    { method: 'GET', endpoint: '/v1/stations/query/columns', description: 'Get station query columns (v1)' },
+    { method: 'GET', endpoint: '/v2/stations/query/columns', description: 'Get station query columns (v2)' },
     { method: 'GET', endpoint: '/v1/stations/{stationId}/location', description: 'Get station location' },
     { method: 'GET', endpoint: '/v1/stations/events/{macaddress}', description: 'Get station events' },
-  ],
-
-  'Services & Roles': [
-    { method: 'GET', endpoint: '/v1/services', description: 'Get services' },
-    { method: 'POST', endpoint: '/v1/services', description: 'Create service' },
-    { method: 'GET', endpoint: '/v1/services/default', description: 'Get default service' },
-    { method: 'GET', endpoint: '/v1/services/nametoidmap', description: 'Get service name map' },
-    { method: 'GET', endpoint: '/v1/services/{serviceId}', description: 'Get specific service' },
-    { method: 'PUT', endpoint: '/v1/services/{serviceId}', description: 'Update service' },
-    { method: 'DELETE', endpoint: '/v1/services/{serviceId}', description: 'Delete service' },
-    { method: 'GET', endpoint: '/v1/services/{serviceId}/deviceids', description: 'Get service device IDs' },
-    { method: 'GET', endpoint: '/v1/services/{serviceId}/siteids', description: 'Get service site IDs' },
-    { method: 'GET', endpoint: '/v1/services/{serviceId}/stations', description: 'Get service stations' },
-    { method: 'GET', endpoint: '/v1/services/{serviceid}/bssid0', description: 'Get service BSSID0' },
-    { method: 'GET', endpoint: '/v3/roles', description: 'Get roles (v3)' },
-    { method: 'POST', endpoint: '/v3/roles', description: 'Create role (v3)' },
-    { method: 'GET', endpoint: '/v3/roles/default', description: 'Get default role (v3)' },
-    { method: 'GET', endpoint: '/v3/roles/nametoidmap', description: 'Get role name map (v3)' },
-    { method: 'GET', endpoint: '/v3/roles/{roleId}', description: 'Get specific role (v3)' },
-    { method: 'PUT', endpoint: '/v3/roles/{roleId}', description: 'Update role (v3)' },
-    { method: 'POST', endpoint: '/v3/roles/{roleId}', description: 'Create role with service ID (v3)' },
-    { method: 'DELETE', endpoint: '/v3/roles/{roleId}', description: 'Delete role (v3)' },
-    { method: 'GET', endpoint: '/v3/roles/{roleId}/rulestats', description: 'Get role rule stats (v3)' },
-    { method: 'GET', endpoint: '/v1/roles/{roleid}/stations', description: 'Get role stations' },
   ],
 
   'Network Profiles & Policies': [
     { method: 'GET', endpoint: '/v3/profiles', description: 'Get network profiles' },
     { method: 'POST', endpoint: '/v3/profiles', description: 'Create network profile' },
+    { method: 'POST', endpoint: '/v4/profiles/', description: 'Create network profile (v4)' },
+    { method: 'POST', endpoint: '/v3/profiles/{profileId}/clone', description: 'Clone profile' },
     { method: 'GET', endpoint: '/v3/profiles/nametoidmap', description: 'Get profile name to ID map' },
     { method: 'GET', endpoint: '/v3/profiles/{profileId}', description: 'Get specific profile' },
     { method: 'PUT', endpoint: '/v3/profiles/{profileId}', description: 'Update profile' },
@@ -200,6 +178,30 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'DELETE', endpoint: '/v3/rfmgmt/{rfmgmtId}', description: 'Delete RF management profile' },
   ],
 
+  'Services & Roles': [
+    { method: 'GET', endpoint: '/v1/services', description: 'Get services' },
+    { method: 'POST', endpoint: '/v1/services', description: 'Create service' },
+    { method: 'GET', endpoint: '/v1/services/default', description: 'Get default service' },
+    { method: 'GET', endpoint: '/v1/services/nametoidmap', description: 'Get service name map' },
+    { method: 'GET', endpoint: '/v1/services/{serviceId}', description: 'Get specific service' },
+    { method: 'PUT', endpoint: '/v1/services/{serviceId}', description: 'Update service' },
+    { method: 'DELETE', endpoint: '/v1/services/{serviceId}', description: 'Delete service' },
+    { method: 'GET', endpoint: '/v1/services/{serviceId}/deviceids', description: 'Get service device IDs' },
+    { method: 'GET', endpoint: '/v1/services/{serviceId}/siteids', description: 'Get service site IDs' },
+    { method: 'GET', endpoint: '/v1/services/{serviceId}/stations', description: 'Get service stations' },
+    { method: 'GET', endpoint: '/v1/services/{serviceid}/bssid0', description: 'Get service BSSID0' },
+    { method: 'GET', endpoint: '/v3/roles', description: 'Get roles' },
+    { method: 'POST', endpoint: '/v3/roles', description: 'Create role' },
+    { method: 'GET', endpoint: '/v3/roles/default', description: 'Get default role' },
+    { method: 'GET', endpoint: '/v3/roles/nametoidmap', description: 'Get role name map' },
+    { method: 'GET', endpoint: '/v3/roles/{roleId}', description: 'Get specific role' },
+    { method: 'PUT', endpoint: '/v3/roles/{roleId}', description: 'Update role' },
+    { method: 'POST', endpoint: '/v3/roles/{roleId}', description: 'Create role configuration' },
+    { method: 'DELETE', endpoint: '/v3/roles/{roleId}', description: 'Delete role' },
+    { method: 'GET', endpoint: '/v3/roles/{roleId}/rulestats', description: 'Get role rule stats' },
+    { method: 'GET', endpoint: '/v1/roles/{roleid}/stations', description: 'Get role stations' },
+  ],
+
   'Switching & Ports': [
     { method: 'GET', endpoint: '/v1/switches', description: 'Get switches' },
     { method: 'GET', endpoint: '/v1/switches/displaynames', description: 'Get switch display names' },
@@ -224,6 +226,73 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/cliconfigs/backup', description: 'Backup CLI config' },
     { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/cliconfigs/restore/{name}', description: 'Restore CLI config' },
     { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/login', description: 'Switch login' },
+  ],
+
+  'Reports & Analytics': [
+    { method: 'GET', endpoint: '/v1/reports/templates', description: 'Get report templates' },
+    { method: 'POST', endpoint: '/v1/reports/templates', description: 'Create report template' },
+    { method: 'GET', endpoint: '/v1/reports/templates/{templateId}', description: 'Get report template' },
+    { method: 'PUT', endpoint: '/v1/reports/templates/{templateId}', description: 'Update report template' },
+    { method: 'DELETE', endpoint: '/v1/reports/templates/{templateId}', description: 'Delete report template' },
+    { method: 'GET', endpoint: '/v1/reports/templates/default', description: 'Get default report template' },
+    { method: 'GET', endpoint: '/v1/reports/templates/nametoidmap', description: 'Get report template name map' },
+    { method: 'GET', endpoint: '/v1/reports/scheduled', description: 'Get scheduled reports' },
+    { method: 'POST', endpoint: '/v1/reports/scheduled', description: 'Create scheduled report' },
+    { method: 'GET', endpoint: '/v1/reports/scheduled/{reportId}', description: 'Get scheduled report' },
+    { method: 'PUT', endpoint: '/v1/reports/scheduled/{reportId}', description: 'Update scheduled report' },
+    { method: 'DELETE', endpoint: '/v1/reports/scheduled/{reportId}', description: 'Delete scheduled report' },
+    { method: 'GET', endpoint: '/v1/reports/scheduled/default', description: 'Get default scheduled report' },
+    { method: 'GET', endpoint: '/v1/reports/scheduled/nametoidmap', description: 'Get scheduled report name map' },
+    { method: 'GET', endpoint: '/v1/reports/generated', description: 'Get generated reports' },
+    { method: 'GET', endpoint: '/v1/reports/generated/{filename}', description: 'Get generated report file' },
+    { method: 'DELETE', endpoint: '/v1/reports/generated/{filename}', description: 'Delete generated report' },
+    { method: 'PUT', endpoint: '/v1/reports/generated/filelist', description: 'Update report file list' },
+    { method: 'GET', endpoint: '/v1/reports/widgets', description: 'Get report widgets' },
+    { method: 'GET', endpoint: '/v1/aps/report', description: 'Get APs report' },
+    { method: 'GET', endpoint: '/v1/aps/report/widgets', description: 'Get AP report widgets' },
+    { method: 'PUT', endpoint: '/v1/aps/{apSerialNumber}/report', description: 'Update AP report' },
+    { method: 'GET', endpoint: '/v1/aps/{apSerialNumber}/report', description: 'Get AP report' },
+    { method: 'GET', endpoint: '/v1/report/sites', description: 'Get sites report' },
+    { method: 'GET', endpoint: '/v1/report/aps/{apSerialNumber}', description: 'Get AP report' },
+    { method: 'GET', endpoint: '/v1/report/aps/{apSerialNumber}/smartrf', description: 'Get AP SmartRF report' },
+    { method: 'GET', endpoint: '/v1/report/flex/{duration}', description: 'Get flex report' },
+    { method: 'GET', endpoint: '/v1/report/ports/{portId}', description: 'Get port report' },
+    { method: 'GET', endpoint: '/v1/report/roles/{roleId}', description: 'Get role report' },
+    { method: 'GET', endpoint: '/v1/report/services/{serviceId}', description: 'Get service report' },
+    { method: 'GET', endpoint: '/v1/report/sites/{siteId}', description: 'Get site report' },
+    { method: 'GET', endpoint: '/v1/report/stations/{stationId}', description: 'Get station report' },
+    { method: 'GET', endpoint: '/v1/report/switches/{switchSerialNumber}', description: 'Get switch report' },
+    { method: 'GET', endpoint: '/v1/report/location/aps/{apSerialNumber}', description: 'Get AP location report' },
+    { method: 'GET', endpoint: '/v1/report/location/floor/{floorId}', description: 'Get floor location report' },
+    { method: 'GET', endpoint: '/v1/report/location/stations/{stationId}', description: 'Get station location report' },
+    { method: 'GET', endpoint: '/v2/report/upgrade/devices', description: 'Get device upgrade report' },
+    { method: 'GET', endpoint: '/v3/sites/report/widgets', description: 'Get site report widgets' },
+    { method: 'PUT', endpoint: '/v3/sites/report', description: 'Update sites report' },
+    { method: 'GET', endpoint: '/v3/sites/report', description: 'Get sites report' },
+    { method: 'GET', endpoint: '/v3/sites/report/venue', description: 'Get venue report' },
+    { method: 'GET', endpoint: '/v1/sites/report/widgets', description: 'Get site report widgets (v1)' },
+    { method: 'PUT', endpoint: '/v1/sites/{siteId}/report', description: 'Update site report' },
+    { method: 'GET', endpoint: '/v1/sites/{siteId}/report', description: 'Get site report' },
+    { method: 'GET', endpoint: '/v3/sites/{siteId}/report/venue', description: 'Get site venue report' },
+    { method: 'GET', endpoint: '/v3/sites/report/impact', description: 'Get sites impact report' },
+    { method: 'GET', endpoint: '/v3/sites/{siteId}/report/impact', description: 'Get site impact report' },
+    { method: 'GET', endpoint: '/v3/sites/report/flex', description: 'Get sites flex report' },
+    { method: 'GET', endpoint: '/v3/sites/report/location/floor/{floorId}', description: 'Get floor location report' },
+    { method: 'GET', endpoint: '/v1/stations/report/widgets', description: 'Get station report widgets' },
+    { method: 'PUT', endpoint: '/v1/stations/{stationId}/report', description: 'Update station report' },
+    { method: 'GET', endpoint: '/v1/stations/{stationId}/report', description: 'Get station report' },
+    { method: 'GET', endpoint: '/v1/roles/report/widgets', description: 'Get role report widgets' },
+    { method: 'PUT', endpoint: '/v1/roles/{roleId}/report', description: 'Update role report' },
+    { method: 'GET', endpoint: '/v1/roles/{roleId}/report', description: 'Get role report' },
+    { method: 'GET', endpoint: '/v1/services/report/widgets', description: 'Get service report widgets' },
+    { method: 'PUT', endpoint: '/v1/services/{serviceId}/report', description: 'Update service report' },
+    { method: 'GET', endpoint: '/v1/services/{serviceId}/report', description: 'Get service report' },
+    { method: 'GET', endpoint: '/v1/switches/ports/report/widgets', description: 'Get switch port report widgets' },
+    { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/ports/{portId}/report', description: 'Update switch port report' },
+    { method: 'GET', endpoint: '/v1/switches/{serialNumber}/ports/{portId}/report', description: 'Get switch port report' },
+    { method: 'GET', endpoint: '/v1/switches/report/widgets', description: 'Get switch report widgets' },
+    { method: 'PUT', endpoint: '/v1/switches/{serialNumber}/report', description: 'Update switch report' },
+    { method: 'GET', endpoint: '/v1/switches/{serialNumber}/report', description: 'Get switch report' },
   ],
 
   'System Configuration': [
@@ -254,435 +323,295 @@ const endpointCategories: Record<string, EndpointInfo[]> = {
     { method: 'GET', endpoint: '/v1/state/sites/{siteId}/aps', description: 'Get site APs state' },
   ],
 
-  'Reports & Analytics': [
-    { method: 'GET', endpoint: '/v1/reports/templates', description: 'Get report templates' },
-    { method: 'POST', endpoint: '/v1/reports/templates', description: 'Create report template' },
-    { method: 'GET', endpoint: '/v1/reports/templates/{templateId}', description: 'Get report template' },
-    { method: 'PUT', endpoint: '/v1/reports/templates/{templateId}', description: 'Update report template' },
-    { method: 'DELETE', endpoint: '/v1/reports/templates/{templateId}', description: 'Delete report template' },
-    { method: 'GET', endpoint: '/v1/reports/templates/default', description: 'Get default report template' },
-    { method: 'GET', endpoint: '/v1/reports/templates/nametoidmap', description: 'Get report template name map' },
-    { method: 'GET', endpoint: '/v1/reports/scheduled', description: 'Get scheduled reports' },
-    { method: 'POST', endpoint: '/v1/reports/scheduled', description: 'Create scheduled report' },
-    { method: 'GET', endpoint: '/v1/reports/scheduled/{reportId}', description: 'Get scheduled report' },
-    { method: 'PUT', endpoint: '/v1/reports/scheduled/{reportId}', description: 'Update scheduled report' },
-    { method: 'DELETE', endpoint: '/v1/reports/scheduled/{reportId}', description: 'Delete scheduled report' },
-    { method: 'GET', endpoint: '/v1/reports/scheduled/default', description: 'Get default scheduled report' },
-    { method: 'GET', endpoint: '/v1/reports/scheduled/nametoidmap', description: 'Get scheduled report name map' },
-    { method: 'GET', endpoint: '/v1/reports/generated', description: 'Get generated reports' },
-    { method: 'GET', endpoint: '/v1/reports/generated/{filename}', description: 'Get generated report file' },
-    { method: 'DELETE', endpoint: '/v1/reports/generated/{filename}', description: 'Delete generated report' },
-    { method: 'PUT', endpoint: '/v1/reports/generated/filelist', description: 'Update report file list' },
-    { method: 'GET', endpoint: '/v1/reports/widgets', description: 'Get report widgets' },
-    { method: 'GET', endpoint: '/v1/report/sites', description: 'Get sites report' },
-    { method: 'GET', endpoint: '/v1/report/aps/{apSerialNumber}', description: 'Get AP report' },
-    { method: 'GET', endpoint: '/v1/report/aps/{apSerialNumber}/smartrf', description: 'Get AP SmartRF report' },
-    { method: 'GET', endpoint: '/v1/report/flex/{duration}', description: 'Get flex report' },
-    { method: 'GET', endpoint: '/v1/report/ports/{portId}', description: 'Get port report' },
-    { method: 'GET', endpoint: '/v1/report/roles/{roleId}', description: 'Get role report' },
-    { method: 'GET', endpoint: '/v1/report/services/{serviceId}', description: 'Get service report' },
-    { method: 'GET', endpoint: '/v1/report/sites/{siteId}', description: 'Get site report' },
-    { method: 'GET', endpoint: '/v1/report/stations/{stationId}', description: 'Get station report' },
-    { method: 'GET', endpoint: '/v1/report/switches/{switchSerialNumber}', description: 'Get switch report' },
-    { method: 'GET', endpoint: '/v1/report/location/aps/{apSerialNumber}', description: 'Get AP location report' },
-    { method: 'GET', endpoint: '/v1/report/location/floor/{floorId}', description: 'Get floor location report' },
-    { method: 'GET', endpoint: '/v1/report/location/stations/{stationId}', description: 'Get station location report' },
-    { method: 'GET', endpoint: '/v2/report/upgrade/devices', description: 'Get device upgrade report' },
-  ],
-
-  'Air Defense Security': [
-    { method: 'GET', endpoint: '/v3/adsp', description: 'Get Air Defense profiles (v3)' },
-    { method: 'POST', endpoint: '/v3/adsp', description: 'Create Air Defense profile (v3)' },
-    { method: 'GET', endpoint: '/v3/adsp/default', description: 'Get default Air Defense profile (v3)' },
-    { method: 'GET', endpoint: '/v3/adsp/nametoidmap', description: 'Get Air Defense profile name map (v3)' },
-    { method: 'GET', endpoint: '/v3/adsp/{adspId}', description: 'Get Air Defense profile by ID (v3)' },
-    { method: 'PUT', endpoint: '/v3/adsp/{adspId}', description: 'Update Air Defense profile (v3)' },
-    { method: 'DELETE', endpoint: '/v3/adsp/{adspId}', description: 'Delete Air Defense profile (v3)' },
-    { method: 'GET', endpoint: '/v4/adsp', description: 'Get Air Defense profiles (v4)' },
-    { method: 'POST', endpoint: '/v4/adsp', description: 'Create Air Defense profile (v4)' },
-    { method: 'GET', endpoint: '/v4/adsp/default', description: 'Get default Air Defense profile (v4)' },
-    { method: 'GET', endpoint: '/v4/adsp/nametoidmap', description: 'Get Air Defense profile name map (v4)' },
-    { method: 'GET', endpoint: '/v4/adsp/{adspId}', description: 'Get Air Defense profile by ID (v4)' },
-    { method: 'PUT', endpoint: '/v4/adsp/{adspId}', description: 'Update Air Defense profile (v4)' },
-    { method: 'DELETE', endpoint: '/v4/adsp/{adspId}', description: 'Delete Air Defense profile (v4)' },
-  ],
-
-  'Analytics & Performance': [
+  'Security & Analytics': [
+    { method: 'GET', endpoint: '/v3/adsp', description: 'Get ADSP profiles' },
+    { method: 'POST', endpoint: '/v3/adsp', description: 'Create ADSP profile' },
+    { method: 'GET', endpoint: '/v3/adsp/default', description: 'Get default ADSP' },
+    { method: 'GET', endpoint: '/v3/adsp/nametoidmap', description: 'Get ADSP name map' },
+    { method: 'GET', endpoint: '/v3/adsp/{adspId}', description: 'Get ADSP profile' },
+    { method: 'PUT', endpoint: '/v3/adsp/{adspId}', description: 'Update ADSP profile' },
+    { method: 'DELETE', endpoint: '/v3/adsp/{adspId}', description: 'Delete ADSP profile' },
+    { method: 'GET', endpoint: '/v4/adsp', description: 'Get ADSP profiles (v4)' },
+    { method: 'POST', endpoint: '/v4/adsp', description: 'Create ADSP profile (v4)' },
+    { method: 'GET', endpoint: '/v4/adsp/default', description: 'Get default ADSP (v4)' },
+    { method: 'GET', endpoint: '/v4/adsp/nametoidmap', description: 'Get ADSP name map (v4)' },
+    { method: 'GET', endpoint: '/v4/adsp/{adspId}', description: 'Get ADSP profile (v4)' },
+    { method: 'PUT', endpoint: '/v4/adsp/{adspId}', description: 'Update ADSP profile (v4)' },
+    { method: 'DELETE', endpoint: '/v4/adsp/{adspId}', description: 'Delete ADSP profile (v4)' },
+    { method: 'GET', endpoint: '/v4/airdefense', description: 'Get air defense profiles' },
+    { method: 'POST', endpoint: '/v4/airdefense', description: 'Create air defense profile' },
+    { method: 'GET', endpoint: '/v4/airdefense/default', description: 'Get default air defense' },
+    { method: 'GET', endpoint: '/v4/airdefense/nametoidmap', description: 'Get air defense name map' },
+    { method: 'GET', endpoint: '/v4/airdefense/{adspId}', description: 'Get air defense profile' },
+    { method: 'PUT', endpoint: '/v4/airdefense/{adspId}', description: 'Update air defense profile' },
+    { method: 'DELETE', endpoint: '/v4/airdefense/{adspId}', description: 'Delete air defense profile' },
     { method: 'GET', endpoint: '/v3/analytics', description: 'Get analytics profiles' },
     { method: 'POST', endpoint: '/v3/analytics', description: 'Create analytics profile' },
-    { method: 'GET', endpoint: '/v3/analytics/default', description: 'Get default analytics profile' },
-    { method: 'GET', endpoint: '/v3/analytics/nametoidmap', description: 'Get analytics profile name map' },
-    { method: 'GET', endpoint: '/v3/analytics/{analyticsProfileId}', description: 'Get analytics profile by ID' },
+    { method: 'GET', endpoint: '/v3/analytics/default', description: 'Get default analytics' },
+    { method: 'GET', endpoint: '/v3/analytics/nametoidmap', description: 'Get analytics name map' },
+    { method: 'GET', endpoint: '/v3/analytics/{analyticsProfileId}', description: 'Get analytics profile' },
     { method: 'PUT', endpoint: '/v3/analytics/{analyticsProfileId}', description: 'Update analytics profile' },
     { method: 'DELETE', endpoint: '/v3/analytics/{analyticsProfileId}', description: 'Delete analytics profile' },
   ],
 
-  'Quality of Service': [
-    { method: 'GET', endpoint: '/v1/cos', description: 'Get Class of Service profiles' },
-    { method: 'POST', endpoint: '/v1/cos', description: 'Create Class of Service profile' },
-    { method: 'GET', endpoint: '/v1/cos/default', description: 'Get default Class of Service' },
-    { method: 'GET', endpoint: '/v1/cos/nametoidmap', description: 'Get CoS name to ID map' },
-    { method: 'GET', endpoint: '/v1/cos/{cosId}', description: 'Get Class of Service by ID' },
-    { method: 'PUT', endpoint: '/v1/cos/{cosId}', description: 'Update Class of Service' },
-    { method: 'DELETE', endpoint: '/v1/cos/{cosId}', description: 'Delete Class of Service' },
-    { method: 'GET', endpoint: '/v1/ratelimiters', description: 'Get rate limiters' },
-    { method: 'POST', endpoint: '/v1/ratelimiters', description: 'Create rate limiter' },
-    { method: 'GET', endpoint: '/v1/ratelimiters/default', description: 'Get default rate limiter' },
-    { method: 'GET', endpoint: '/v1/ratelimiters/nametoidmap', description: 'Get rate limiter name map' },
-    { method: 'GET', endpoint: '/v1/ratelimiters/{rateLimiterId}', description: 'Get rate limiter by ID' },
-    { method: 'PUT', endpoint: '/v1/ratelimiters/{rateLimiterId}', description: 'Update rate limiter' },
-    { method: 'DELETE', endpoint: '/v1/ratelimiters/{rateLimiterId}', description: 'Delete rate limiter' },
+  'Platform Manager - Backup & Configuration': [
+    { method: 'GET', endpoint: '/platformmanager/v1/configuration/backups', description: 'Get configuration backups' },
+    { method: 'POST', endpoint: '/platformmanager/v1/configuration/backup', description: 'Create configuration backup' },
+    { method: 'POST', endpoint: '/platformmanager/v1/configuration/restore', description: 'Restore configuration' },
+    { method: 'GET', endpoint: '/platformmanager/v1/configuration/download/{filename}', description: 'Download backup file' },
   ],
 
-  'Device Management': [
-    { method: 'GET', endpoint: '/v1/deviceimages/{hwType}', description: 'Get device images by hardware type' },
-    { method: 'GET', endpoint: '/v1/dpisignatures', description: 'Get DPI signatures' },
-    { method: 'PUT', endpoint: '/v1/dpisignatures', description: 'Update DPI signatures' },
-    { method: 'GET', endpoint: '/v1/dpisignatures/custom', description: 'Get custom DPI signatures' },
+  'Platform Manager - License Management': [
+    { method: 'GET', endpoint: '/platformmanager/v1/license/info', description: 'Get license information' },
+    { method: 'GET', endpoint: '/platformmanager/v1/license/usage', description: 'Get license usage' },
+    { method: 'POST', endpoint: '/platformmanager/v1/license/install', description: 'Install license' },
   ],
 
-  'IoT & Location Services': [
-    { method: 'GET', endpoint: '/v3/iotprofile', description: 'Get IoT profiles' },
-    { method: 'POST', endpoint: '/v3/iotprofile', description: 'Create IoT profile' },
-    { method: 'GET', endpoint: '/v3/iotprofile/default', description: 'Get default IoT profile' },
-    { method: 'GET', endpoint: '/v3/iotprofile/nametoidmap', description: 'Get IoT profile name map' },
-    { method: 'GET', endpoint: '/v3/iotprofile/{iotprofileId}', description: 'Get IoT profile by ID' },
-    { method: 'PUT', endpoint: '/v3/iotprofile/{iotprofileId}', description: 'Update IoT profile' },
-    { method: 'DELETE', endpoint: '/v3/iotprofile/{iotprofileId}', description: 'Delete IoT profile' },
-    { method: 'GET', endpoint: '/v1/rtlsprofile', description: 'Get RTLS profiles' },
-    { method: 'POST', endpoint: '/v1/rtlsprofile', description: 'Create RTLS profile' },
-    { method: 'GET', endpoint: '/v1/rtlsprofile/default', description: 'Get default RTLS profile' },
-    { method: 'GET', endpoint: '/v1/rtlsprofile/nametoidmap', description: 'Get RTLS profile name map' },
-    { method: 'GET', endpoint: '/v1/rtlsprofile/{rtlsprofileId}', description: 'Get RTLS profile by ID' },
-    { method: 'PUT', endpoint: '/v1/rtlsprofile/{rtlsprofileId}', description: 'Update RTLS profile' },
-    { method: 'DELETE', endpoint: '/v1/rtlsprofile/{rtlsprofileId}', description: 'Delete RTLS profile' },
-    { method: 'GET', endpoint: '/v3/positioning', description: 'Get positioning profiles' },
-    { method: 'POST', endpoint: '/v3/positioning', description: 'Create positioning profile' },
-    { method: 'GET', endpoint: '/v3/positioning/default', description: 'Get default positioning profile' },
-    { method: 'GET', endpoint: '/v3/positioning/nametoidmap', description: 'Get positioning profile name map' },
-    { method: 'GET', endpoint: '/v3/positioning/{positioningProfileId}', description: 'Get positioning profile by ID' },
-    { method: 'PUT', endpoint: '/v3/positioning/{positioningProfileId}', description: 'Update positioning profile' },
-    { method: 'DELETE', endpoint: '/v3/positioning/{positioningProfileId}', description: 'Delete positioning profile' },
-    { method: 'GET', endpoint: '/v3/xlocation', description: 'Get XLocation profiles' },
-    { method: 'POST', endpoint: '/v3/xlocation', description: 'Create XLocation profile' },
-    { method: 'GET', endpoint: '/v3/xlocation/default', description: 'Get default XLocation profile' },
-    { method: 'GET', endpoint: '/v3/xlocation/nametoidmap', description: 'Get XLocation profile name map' },
-    { method: 'GET', endpoint: '/v3/xlocation/{xlocationId}', description: 'Get XLocation profile by ID' },
-    { method: 'PUT', endpoint: '/v3/xlocation/{xlocationId}', description: 'Update XLocation profile' },
-    { method: 'DELETE', endpoint: '/v3/xlocation/{xlocationId}', description: 'Delete XLocation profile' },
+  'Platform Manager - Flash Memory': [
+    { method: 'GET', endpoint: '/platformmanager/v1/flash/files', description: 'Get flash files' },
+    { method: 'GET', endpoint: '/platformmanager/v1/flash/usage', description: 'Get flash usage' },
+    { method: 'DELETE', endpoint: '/platformmanager/v1/flash/files/{filename}', description: 'Delete flash file' },
   ],
 
-  'Mesh & Topology': [
-    { method: 'GET', endpoint: '/v3/meshpoints', description: 'Get meshpoints' },
-    { method: 'POST', endpoint: '/v3/meshpoints', description: 'Create meshpoint' },
-    { method: 'GET', endpoint: '/v3/meshpoints/default', description: 'Get default meshpoint' },
-    { method: 'GET', endpoint: '/v3/meshpoints/profile/default', description: 'Get default meshpoint profile' },
-    { method: 'GET', endpoint: '/v3/meshpoints/nametoidmap', description: 'Get meshpoint name map' },
-    { method: 'GET', endpoint: '/v3/meshpoints/{meshpointId}', description: 'Get meshpoint by ID' },
-    { method: 'PUT', endpoint: '/v3/meshpoints/{meshpointId}', description: 'Update meshpoint' },
-    { method: 'DELETE', endpoint: '/v3/meshpoints/{meshpointId}', description: 'Delete meshpoint' },
-    { method: 'GET', endpoint: '/v3/meshpoints/tree/{meshpointId}', description: 'Get meshpoint tree' },
-    { method: 'GET', endpoint: '/v3/meshpoints/{meshpointId}/bssid', description: 'Get meshpoint BSSID' },
-    { method: 'GET', endpoint: '/v1/topologies', description: 'Get topologies (v1)' },
-    { method: 'POST', endpoint: '/v1/topologies', description: 'Create topology (v1)' },
-    { method: 'GET', endpoint: '/v1/topologies/default', description: 'Get default topology (v1)' },
-    { method: 'GET', endpoint: '/v1/topologies/nametoidmap', description: 'Get topology name map (v1)' },
-    { method: 'GET', endpoint: '/v1/topologies/{topologyId}', description: 'Get topology by ID (v1)' },
-    { method: 'PUT', endpoint: '/v1/topologies/{topologyId}', description: 'Update topology (v1)' },
-    { method: 'DELETE', endpoint: '/v1/topologies/{topologyId}', description: 'Delete topology (v1)' },
-    { method: 'GET', endpoint: '/v3/topologies', description: 'Get topologies (v3)' },
+  'Platform Manager - Network Diagnostics': [
+    { method: 'POST', endpoint: '/platformmanager/v1/network/ping', description: 'Execute ping test' },
+    { method: 'POST', endpoint: '/platformmanager/v1/network/traceroute', description: 'Execute traceroute' },
+    { method: 'POST', endpoint: '/platformmanager/v1/network/dns', description: 'Execute DNS lookup' },
   ],
 
-  'Guest Access & AAA': [
-    { method: 'GET', endpoint: '/v1/eguest', description: 'Get EGuest services' },
-    { method: 'POST', endpoint: '/v1/eguest', description: 'Create EGuest service' },
-    { method: 'GET', endpoint: '/v1/eguest/default', description: 'Get default EGuest configuration' },
-    { method: 'GET', endpoint: '/v1/eguest/nametoidmap', description: 'Get EGuest name to ID map' },
-    { method: 'GET', endpoint: '/v1/eguest/{eguestId}', description: 'Get EGuest by ID' },
-    { method: 'PUT', endpoint: '/v1/eguest/{eguestId}', description: 'Update EGuest' },
-    { method: 'DELETE', endpoint: '/v1/eguest/{eguestId}', description: 'Delete EGuest' },
-    { method: 'GET', endpoint: '/v1/aaapolicy', description: 'Get AAA policies' },
-    { method: 'POST', endpoint: '/v1/aaapolicy', description: 'Create AAA policy' },
-    { method: 'GET', endpoint: '/v1/aaapolicy/default', description: 'Get default AAA policy' },
-    { method: 'GET', endpoint: '/v1/aaapolicy/nametoidmap', description: 'Get AAA policy name map' },
-    { method: 'GET', endpoint: '/v1/aaapolicy/{id}', description: 'Get AAA policy by ID' },
-    { method: 'PUT', endpoint: '/v1/aaapolicy/{id}', description: 'Update AAA policy' },
-    { method: 'DELETE', endpoint: '/v1/aaapolicy/{id}', description: 'Delete AAA policy' },
+  'AP Firmware Management': [
+    { method: 'POST', endpoint: '/v1/accesspoints/software/upgrade', description: 'Upgrade AP software' },
+    { method: 'GET', endpoint: '/v1/accesspoints/software/schedule', description: 'Get upgrade schedules' },
+    { method: 'POST', endpoint: '/v1/accesspoints/software/schedule', description: 'Create upgrade schedule' },
+    { method: 'DELETE', endpoint: '/v1/accesspoints/software/schedule/{id}', description: 'Delete upgrade schedule' },
+    { method: 'POST', endpoint: '/v1/devices/adoption/force', description: 'Force adopt device' },
+    { method: 'DELETE', endpoint: '/v1/devices/{serialNumber}/unadopt', description: 'Unadopt device' },
   ],
 
-  'MSP & Multi-tenant': [
-    { method: 'GET', endpoint: '/v1/msp/briefsites/{tenantId}', description: 'Get MSP brief sites for tenant' },
+  'Client Management (Enhanced)': [
+    { method: 'POST', endpoint: '/v1/stations/{mac}/deauth', description: 'Deauthenticate station' },
+    { method: 'POST', endpoint: '/v1/stations/{mac}/block', description: 'Block station' },
+    { method: 'DELETE', endpoint: '/v1/stations/{mac}/block', description: 'Unblock station' },
+    { method: 'GET', endpoint: '/v1/stations/{mac}/history', description: 'Get station history' },
+    { method: 'POST', endpoint: '/v1/stations/{mac}/bandwidth/limit', description: 'Set bandwidth limit' },
+    { method: 'GET', endpoint: '/v1/stations/blocked', description: 'Get blocked stations' },
+  ],
+
+  'Events & Alarms': [
+    { method: 'GET', endpoint: '/v1/events', description: 'Get system events' },
+    { method: 'GET', endpoint: '/v1/alarms', description: 'Get all alarms' },
+    { method: 'GET', endpoint: '/v1/alarms/active', description: 'Get active alarms' },
+    { method: 'POST', endpoint: '/v1/alarms/{id}/acknowledge', description: 'Acknowledge alarm' },
+    { method: 'POST', endpoint: '/v1/alarms/{id}/clear', description: 'Clear alarm' },
+  ],
+
+  'RF Analytics': [
+    { method: 'GET', endpoint: '/v1/analytics/wireless/interference', description: 'Get wireless interference' },
+    { method: 'GET', endpoint: '/v1/analytics/wireless/coverage', description: 'Get wireless coverage' },
+    { method: 'GET', endpoint: '/v1/analytics/clients/roaming', description: 'Get client roaming analytics' },
+  ],
+
+  'Security & Rogue AP Detection': [
+    { method: 'POST', endpoint: '/v1/security/rogue-ap/detect', description: 'Detect rogue APs' },
+    { method: 'GET', endpoint: '/v1/security/rogue-ap/list', description: 'Get rogue AP list' },
+    { method: 'POST', endpoint: '/v1/security/rogue-ap/{mac}/classify', description: 'Classify rogue AP' },
+    { method: 'GET', endpoint: '/v1/security/threats', description: 'Get security threats' },
+    { method: 'POST', endpoint: '/v1/security/wids/enable', description: 'Enable WIDS' },
+  ],
+
+  'Guest Management': [
+    { method: 'GET', endpoint: '/v1/guests', description: 'Get guest accounts' },
+    { method: 'POST', endpoint: '/v1/guests/create', description: 'Create guest account' },
+    { method: 'DELETE', endpoint: '/v1/guests/{id}', description: 'Delete guest account' },
+    { method: 'POST', endpoint: '/v1/guests/{id}/voucher', description: 'Generate guest voucher' },
+    { method: 'GET', endpoint: '/v1/guests/portal/config', description: 'Get guest portal config' },
+    { method: 'POST', endpoint: '/v1/guests/portal/customize', description: 'Customize guest portal' },
+  ],
+
+  'QoS Management': [
+    { method: 'POST', endpoint: '/v1/qos/policy/create', description: 'Create QoS policy' },
+    { method: 'GET', endpoint: '/v1/qos/statistics', description: 'Get QoS statistics' },
+    { method: 'POST', endpoint: '/v1/qos/bandwidth/allocate', description: 'Allocate bandwidth' },
+    { method: 'GET', endpoint: '/v1/qos/dscp/mappings', description: 'Get DSCP mappings' },
+  ],
+
+  'Application Manager': [
+    { method: 'GET', endpoint: '/appsmanager/v1/applications', description: 'Get applications' },
+    { method: 'POST', endpoint: '/appsmanager/v1/applications/install', description: 'Install application' },
+    { method: 'GET', endpoint: '/appsmanager/v1/containers', description: 'Get containers' },
+    { method: 'POST', endpoint: '/appsmanager/v1/containers/create', description: 'Create container' },
+    { method: 'GET', endpoint: '/appsmanager/v1/storage', description: 'Get storage info' },
+    { method: 'GET', endpoint: '/appsmanager/v1/images', description: 'Get application images' },
+  ],
+
+  'Location Analytics': [
+    { method: 'POST', endpoint: '/v1/location/zone/create', description: 'Create location zone' },
+    { method: 'GET', endpoint: '/v1/location/zone/list', description: 'Get location zones' },
+    { method: 'POST', endpoint: '/v1/location/presence/notify', description: 'Get presence analytics' },
+    { method: 'GET', endpoint: '/v1/location/analytics/dwell', description: 'Get dwell time analytics' },
+    { method: 'GET', endpoint: '/v1/location/analytics/traffic', description: 'Get traffic flow analytics' },
   ],
 };
 
-// Optimize component with memo
-const ApiTestTool = memo(() => {
-  const [currentMethod, setCurrentMethod] = useState('GET');
-  const [currentEndpoint, setCurrentEndpoint] = useState('');
+export function ApiTestTool() {
+  const [method, setMethod] = useState('GET');
+  const [endpoint, setEndpoint] = useState('');
   const [requestBody, setRequestBody] = useState('');
   const [response, setResponse] = useState<ApiResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [requestHistory, setRequestHistory] = useState<ApiRequest[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('all');
-  const [openCategories, setOpenCategories] = useState<Record<string, boolean>>({});
-  const [isMounted, setIsMounted] = useState(true);
+  const [history, setHistory] = useState<ApiRequest[]>([]);
+  const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
-  useEffect(() => {
-    return () => {
-      setIsMounted(false);
-    };
-  }, []);
-
-  // Memoize filtered endpoints for performance
-  const filteredEndpoints = useMemo(() => {
-    if (selectedCategory === 'all') {
-      if (!searchTerm) {
-        return endpointCategories;
-      }
-      
-      const filtered: Record<string, EndpointInfo[]> = {};
-      Object.entries(endpointCategories).forEach(([category, endpoints]) => {
-        const matchingEndpoints = endpoints.filter(
-          endpoint =>
-            endpoint.endpoint.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            endpoint.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            endpoint.method.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-        if (matchingEndpoints.length > 0) {
-          filtered[category] = matchingEndpoints;
-        }
-      });
-      return filtered;
+  const loadEndpoint = (endpointPath: string, endpointMethod: string) => {
+    setEndpoint(endpointPath);
+    setMethod(endpointMethod);
+    if (endpointMethod === 'POST' || endpointMethod === 'PUT') {
+      setRequestBody('{}');
     } else {
-      if (selectedCategory in endpointCategories) {
-        const categoryEndpoints = endpointCategories[selectedCategory];
-        if (!searchTerm) {
-          return { [selectedCategory]: categoryEndpoints };
-        }
-        const filtered = categoryEndpoints.filter(
-          endpoint =>
-            endpoint.endpoint.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            endpoint.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            endpoint.method.toLowerCase().includes(searchTerm.toLowerCase())
-        );
-        return filtered.length > 0 ? { [selectedCategory]: filtered } : {};
-      }
-      return {};
+      setRequestBody('');
     }
-  }, [selectedCategory, searchTerm]);
+  };
 
-  // Memoize category names for filter dropdown
-  const categoryNames = useMemo(() => Object.keys(endpointCategories), []);
-
-  const copyToClipboard = useCallback(async (text: string, label?: string) => {
-    const fallbackCopy = () => {
-      try {
-        const textArea = document.createElement('textarea');
-        textArea.value = text;
-        textArea.style.position = 'fixed';
-        textArea.style.left = '-999999px';
-        textArea.style.top = '-999999px';
-        textArea.style.opacity = '0';
-        textArea.style.pointerEvents = 'none';
-        textArea.setAttribute('readonly', '');
-        document.body.appendChild(textArea);
-        
-        textArea.focus();
-        textArea.select();
-        textArea.setSelectionRange(0, 99999);
-        
-        const successful = document.execCommand('copy');
-        document.body.removeChild(textArea);
-        
-        if (successful) {
-          toast.success(`Copied ${label || 'content'} to clipboard`);
-          return true;
-        } else {
-          throw new Error('execCommand copy failed');
-        }
-      } catch (err) {
-        console.error('Fallback copy failed:', err);
-        toast.error('Unable to copy to clipboard - please copy manually');
-        return false;
-      }
-    };
-
-    if (navigator.clipboard && window.isSecureContext) {
-      try {
-        await navigator.clipboard.writeText(text);
-        toast.success(`Copied ${label || 'content'} to clipboard`);
-        return;
-      } catch (err) {
-        console.warn('Clipboard API failed, trying fallback:', err);
-        fallbackCopy();
-        return;
-      }
-    }
-    
-    fallbackCopy();
-  }, []);
-
-  const executeRequest = useCallback(async () => {
-    if (!currentEndpoint.trim()) {
-      toast.error('Please enter an endpoint');
-      return;
-    }
-
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setIsLoading(true);
+
     const startTime = Date.now();
-
+    
     try {
-      const options: RequestInit = {
-        method: currentMethod,
-      };
-
-      if (['POST', 'PUT', 'PATCH'].includes(currentMethod) && requestBody.trim()) {
-        options.body = requestBody;
-      }
-
-      const response = await apiService.makeAuthenticatedRequest(currentEndpoint, options);
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-
-      let responseBody = '';
-      const contentType = response.headers.get('Content-Type') || '';
-      
-      if (contentType.includes('application/json')) {
+      let parsedBody = undefined;
+      if ((method === 'POST' || method === 'PUT') && requestBody.trim()) {
         try {
-          const jsonData = await response.json();
-          responseBody = JSON.stringify(jsonData, null, 2);
-        } catch (e) {
-          responseBody = await response.text();
+          parsedBody = JSON.parse(requestBody);
+        } catch {
+          throw new Error('Invalid JSON in request body');
         }
-      } else {
-        responseBody = await response.text();
       }
 
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
+      const apiResponse = await apiService.makeAuthenticatedRequest(endpoint, {
+        method,
+        ...(parsedBody && { body: JSON.stringify(parsedBody) }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
       });
 
-      const apiResponse: ApiResponse = {
-        status: response.status,
-        statusText: response.statusText,
-        body: responseBody,
-        headers,
-        duration,
-      };
+      const duration = Date.now() - startTime;
+      let responseBody: string;
 
-      setResponse(apiResponse);
+      try {
+        const responseText = await apiResponse.text();
+        if (responseText) {
+          // Try to parse as JSON for pretty printing
+          try {
+            const jsonData = JSON.parse(responseText);
+            responseBody = JSON.stringify(jsonData, null, 2);
+          } catch {
+            // If not JSON, use as-is
+            responseBody = responseText;
+          }
+        } else {
+          responseBody = 'No response body';
+        }
+      } catch {
+        responseBody = 'Error reading response';
+      }
+
+      const responseHeaders: Record<string, string> = {};
+      apiResponse.headers.forEach((value, key) => {
+        responseHeaders[key] = value;
+      });
+
+      setResponse({
+        status: apiResponse.status,
+        statusText: apiResponse.statusText,
+        body: responseBody,
+        headers: responseHeaders,
+        duration,
+      });
 
       // Add to history
       const newRequest: ApiRequest = {
-        id: `${Date.now()}-${Math.random()}`,
-        method: currentMethod,
-        endpoint: currentEndpoint,
+        id: Date.now().toString(),
+        method,
+        endpoint,
         body: requestBody || undefined,
         timestamp: new Date(),
       };
+      setHistory(prev => [newRequest, ...prev.slice(0, 49)]); // Keep last 50 requests
 
-      setRequestHistory(prev => [newRequest, ...prev.slice(0, 49)]);
-
-      if (response.ok) {
-        toast.success(`Request completed in ${duration}ms`);
-      } else {
-        toast.error(`Request failed: ${response.status} ${response.statusText}`);
-      }
     } catch (error) {
-      if (!isMounted) return;
-      
-      const endTime = Date.now();
-      const duration = endTime - startTime;
-      
-      let errorMessage = 'Unknown error occurred';
-      if (error instanceof Error) {
-        errorMessage = error.message;
-      }
-
-      const errorResponse: ApiResponse = {
+      const duration = Date.now() - startTime;
+      setResponse({
         status: 0,
         statusText: 'Network Error',
-        body: `Error: ${errorMessage}`,
+        body: error instanceof Error ? error.message : 'Unknown error occurred',
         headers: {},
         duration,
-      };
-
-      setResponse(errorResponse);
-      toast.error('API request failed', {
-        description: errorMessage
       });
     } finally {
-      if (isMounted) {
-        setIsLoading(false);
-      }
+      setIsLoading(false);
     }
-  }, [currentMethod, currentEndpoint, requestBody, isMounted]);
+  };
 
-  const clearHistory = useCallback(() => {
-    setRequestHistory([]);
-    toast.success('Request history cleared');
-  }, []);
+  const copyResponse = () => {
+    if (response) {
+      navigator.clipboard.writeText(response.body);
+    }
+  };
 
-  const loadFromHistory = useCallback((request: ApiRequest) => {
-    setCurrentMethod(request.method);
-    setCurrentEndpoint(request.endpoint);
+  const clearHistory = () => {
+    setHistory([]);
+  };
+
+  const loadFromHistory = (request: ApiRequest) => {
+    setMethod(request.method);
+    setEndpoint(request.endpoint);
     setRequestBody(request.body || '');
-    toast.success('Request loaded from history');
-  }, []);
+  };
 
-  const loadEndpoint = useCallback((endpoint: EndpointInfo) => {
-    setCurrentMethod(endpoint.method);
-    setCurrentEndpoint(endpoint.endpoint);
-    setRequestBody('');
-    toast.success(`Loaded ${endpoint.method} ${endpoint.endpoint}`);
-  }, []);
-
-  const toggleCategory = useCallback((category: string) => {
-    setOpenCategories(prev => ({
-      ...prev,
-      [category]: !prev[category]
-    }));
-  }, []);
+  // Filter categories based on selected filter
+  const filteredCategories = categoryFilter === 'all' 
+    ? endpointCategories 
+    : { [categoryFilter]: endpointCategories[categoryFilter as keyof typeof endpointCategories] };
 
   return (
-    <div className="h-full flex flex-col bg-background">
-      <div className="flex-1 min-h-0">
-        <div className="grid grid-cols-1 lg:grid-cols-2 h-full gap-0">
-          {/* Left Panel: API Browser */}
-          <div className="flex flex-col border-r border-border bg-card">
-            <div className="p-4 border-b border-border bg-muted/30">
-              <div className="flex items-center space-x-2 mb-3">
-                <Book className="h-5 w-5 text-primary" />
-                <h2 className="text-lg font-semibold text-foreground">API Explorer</h2>
-                <Badge variant="secondary" className="ml-auto">
-                  {Object.values(filteredEndpoints).reduce((sum, endpoints) => sum + endpoints.length, 0)} endpoints
-                </Badge>
-              </div>
-              
-              <div className="flex space-x-2 mb-3">
-                <div className="flex-1">
-                  <Label htmlFor="search" className="sr-only">Search endpoints</Label>
-                  <div className="relative">
-                    <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      id="search"
-                      placeholder="Search endpoints..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                      className="pl-8"
-                    />
-                  </div>
-                </div>
-                <div className="w-48">
-                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                    <SelectTrigger>
+    <div className="space-y-6">
+      <div>
+
+        <p className="text-muted-foreground">Test and explore AURA Platform API endpoints</p>
+      </div>
+
+      <Tabs defaultValue="test" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="test">API Test & Endpoints</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="applications-debug">
+            <BarChart3 className="h-4 w-4 mr-2" />
+            Applications Debug
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="test" className="space-y-4">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Left Column - API Endpoints */}
+            <Card>
+              <CardHeader>
+                <CardTitle>API Endpoints by Category</CardTitle>
+                <CardDescription>
+                  Click any endpoint to automatically load it for testing
+                </CardDescription>
+                
+                {/* Category Filter */}
+                <div className="flex items-center space-x-2">
+                  <Filter className="h-4 w-4 text-muted-foreground" />
+                  <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+                    <SelectTrigger className="w-64">
                       <SelectValue placeholder="Filter by category" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Categories</SelectItem>
-                      {categoryNames.map((category) => (
+                      {Object.keys(endpointCategories).map((category) => (
                         <SelectItem key={category} value={category}>
                           {category}
                         </SelectItem>
@@ -690,299 +619,195 @@ const ApiTestTool = memo(() => {
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[700px] w-full">
+                  <div className="space-y-6">
+                    {Object.entries(filteredCategories).map(([category, endpoints]) => (
+                      <div key={category}>
+                        <h3 className="font-semibold mb-3 text-primary">{category}</h3>
+                        <div className="space-y-2 ml-2">
+                          {endpoints.map((item, index) => (
+                            <div
+                              key={`${category}-${index}`}
+                              className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted cursor-pointer transition-colors"
+                              onClick={() => loadEndpoint(item.endpoint, item.method)}
+                            >
+                              <div className="flex-1">
+                                <div className="flex items-center space-x-2">
+                                  <Badge 
+                                    variant="outline" 
+                                    className={
+                                      item.method === 'GET' ? 'border-green-500 text-green-700' :
+                                      item.method === 'POST' ? 'border-blue-500 text-blue-700' :
+                                      item.method === 'PUT' ? 'border-orange-500 text-orange-700' :
+                                      item.method === 'DELETE' ? 'border-red-500 text-red-700' :
+                                      ''
+                                    }
+                                  >
+                                    {item.method}
+                                  </Badge>
+                                  <code className="text-sm font-mono">{item.endpoint}</code>
+                                </div>
+                                <p className="text-sm text-muted-foreground mt-1">{item.description}</p>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
 
-              {selectedCategory !== 'all' && (
-                <div className="flex items-center space-x-2 text-sm text-muted-foreground bg-accent/50 px-3 py-2 rounded-md">
-                  <Filter className="h-4 w-4" />
-                  <span>Filtered: {selectedCategory}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSelectedCategory('all')}
-                    className="h-6 px-2 text-xs ml-auto"
-                  >
-                    Clear
-                  </Button>
-                </div>
+            {/* Right Column - API Request Form and Response */}
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>API Request</CardTitle>
+                  <CardDescription>
+                    Make authenticated requests to the AURA Platform API
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div className="flex space-x-2">
+                      <div className="w-32">
+                        <Label htmlFor="method">Method</Label>
+                        <Select value={method} onValueChange={setMethod}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="GET">GET</SelectItem>
+                            <SelectItem value="POST">POST</SelectItem>
+                            <SelectItem value="PUT">PUT</SelectItem>
+                            <SelectItem value="DELETE">DELETE</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex-1">
+                        <Label htmlFor="endpoint">Endpoint</Label>
+                        <Input
+                          id="endpoint"
+                          value={endpoint}
+                          onChange={(e) => setEndpoint(e.target.value)}
+                          placeholder="/v1/accesscontrol"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    {(method === 'POST' || method === 'PUT') && (
+                      <div>
+                        <Label htmlFor="body">Request Body (JSON)</Label>
+                        <Textarea
+                          id="body"
+                          value={requestBody}
+                          onChange={(e) => setRequestBody(e.target.value)}
+                          placeholder='{"key": "value"}'
+                          rows={6}
+                        />
+                      </div>
+                    )}
+
+                    <Button type="submit" disabled={isLoading} className="w-full">
+                      <Play className="mr-2 h-4 w-4" />
+                      {isLoading ? 'Sending...' : 'Send Request'}
+                    </Button>
+                  </form>
+                </CardContent>
+              </Card>
+
+              {response && (
+                <Card>
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="flex items-center space-x-2">
+                        <span>Response</span>
+                        <Badge variant={response.status >= 200 && response.status < 300 ? "default" : "destructive"}>
+                          {response.status} {response.statusText}
+                        </Badge>
+                        <Badge variant="outline">{response.duration}ms</Badge>
+                      </CardTitle>
+                      <Button variant="outline" size="sm" onClick={copyResponse}>
+                        <Copy className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <ScrollArea className="h-64 w-full rounded border p-4">
+                      <pre className="text-sm">{response.body}</pre>
+                    </ScrollArea>
+                  </CardContent>
+                </Card>
               )}
             </div>
-            
-            <ScrollArea className="flex-1">
-              <div className="p-4 space-y-2">
-                {Object.entries(filteredEndpoints).map(([category, endpoints]) => (
-                  <Collapsible
-                    key={category}
-                    open={openCategories[category] ?? false}
-                    onOpenChange={() => toggleCategory(category)}
-                  >
-                    <CollapsibleTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        className="w-full justify-between p-3 h-auto hover:bg-accent text-foreground"
-                      >
-                        <span className="font-medium text-left">{category}</span>
-                        <div className="flex items-center space-x-2">
-                          <Badge variant="outline" className="text-xs">{endpoints.length}</Badge>
-                          {openCategories[category] ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                          )}
-                        </div>
-                      </Button>
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="space-y-1 pl-4 mt-2">
-                        {endpoints.map((endpoint, index) => (
-                          <div
-                            key={`${endpoint.method}-${endpoint.endpoint}-${index}`}
-                            className="group p-3 rounded-md border border-border bg-card hover:bg-accent cursor-pointer transition-colors"
-                            onClick={() => loadEndpoint(endpoint)}
-                          >
-                            <div className="flex items-center space-x-2 mb-1">
-                              <Badge
-                                variant={
-                                  endpoint.method === 'GET' ? 'default' :
-                                  endpoint.method === 'POST' ? 'secondary' :
-                                  endpoint.method === 'PUT' ? 'outline' :
-                                  'destructive'
-                                }
-                                className="text-xs font-mono"
-                              >
-                                {endpoint.method}
-                              </Badge>
-                              <code className="text-sm font-mono text-foreground break-all">
-                                {endpoint.endpoint}
-                              </code>
-                            </div>
-                            <p className="text-xs text-muted-foreground line-clamp-2">
-                              {endpoint.description}
-                            </p>
-                          </div>
-                        ))}
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ))}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="history" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle>Request History</CardTitle>
+                  <CardDescription>
+                    Your recent API requests (last 50)
+                  </CardDescription>
+                </div>
+                <Button variant="outline" size="sm" onClick={clearHistory}>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Clear History
+                </Button>
               </div>
-            </ScrollArea>
-          </div>
-
-          {/* Right Panel: Request Builder & Response */}
-          <div className="flex flex-col bg-background">
-            <Tabs defaultValue="builder" className="flex-1 flex flex-col min-h-0">
-              <TabsList className="grid w-full grid-cols-2 m-4 bg-muted">
-                <TabsTrigger value="builder">API Testing</TabsTrigger>
-                <TabsTrigger value="history">History</TabsTrigger>
-              </TabsList>
-              
-              <TabsContent value="builder" className="flex-1 min-h-0 m-0">
-                <div className="h-full flex flex-col">
-                  {/* Request Builder Section */}
-                  <div className="p-4 pb-2">
-                    <Card>
-                      <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center space-x-2">
-                          <Code className="h-5 w-5" />
-                          <span>Request Builder</span>
-                        </CardTitle>
-                        <CardDescription>
-                          Configure and execute API requests
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        <div className="grid grid-cols-4 gap-2">
-                          <div>
-                            <Label htmlFor="method">Method</Label>
-                            <Select value={currentMethod} onValueChange={setCurrentMethod}>
-                              <SelectTrigger id="method">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="GET">GET</SelectItem>
-                                <SelectItem value="POST">POST</SelectItem>
-                                <SelectItem value="PUT">PUT</SelectItem>
-                                <SelectItem value="DELETE">DELETE</SelectItem>
-                                <SelectItem value="PATCH">PATCH</SelectItem>
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="col-span-3">
-                            <Label htmlFor="endpoint">Endpoint</Label>
-                            <Input
-                              id="endpoint"
-                              placeholder="/v1/example"
-                              value={currentEndpoint}
-                              onChange={(e) => setCurrentEndpoint(e.target.value)}
-                            />
-                          </div>
-                        </div>
-
-                        {['POST', 'PUT', 'PATCH'].includes(currentMethod) && (
-                          <div>
-                            <Label htmlFor="body">Request Body (JSON)</Label>
-                            <Textarea
-                              id="body"
-                              placeholder='{"key": "value"}'
-                              value={requestBody}
-                              onChange={(e) => setRequestBody(e.target.value)}
-                              className="font-mono text-sm min-h-[100px]"
-                            />
-                          </div>
-                        )}
-
-                        <div className="flex space-x-2 pt-2">
-                          <Button
-                            onClick={executeRequest}
-                            disabled={isLoading || !currentEndpoint.trim()}
-                            className="flex items-center space-x-2"
-                          >
-                            <Play className={`h-4 w-4 ${isLoading ? 'animate-pulse' : ''}`} />
-                            <span>{isLoading ? 'Sending...' : 'Send Request'}</span>
-                          </Button>
-                          
-                          <Button
-                            variant="outline"
-                            onClick={() => copyToClipboard(currentEndpoint, 'endpoint')}
-                            disabled={!currentEndpoint.trim()}
-                          >
-                            <Copy className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-
-                  {/* Response Section */}
-                  <div className="flex-1 min-h-0 p-4 pt-2">
-                    <Card className="h-full flex flex-col">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center justify-between">
+            </CardHeader>
+            <CardContent>
+              {history.length === 0 ? (
+                <p className="text-muted-foreground text-center py-8">No requests made yet</p>
+              ) : (
+                <ScrollArea className="h-[600px] w-full">
+                  <div className="space-y-2">
+                    {history.map((request) => (
+                      <div
+                        key={request.id}
+                        className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted cursor-pointer transition-colors"
+                        onClick={() => loadFromHistory(request)}
+                      >
+                        <div className="flex-1">
                           <div className="flex items-center space-x-2">
-                            <Download className="h-5 w-5" />
-                            <span>Response</span>
+                            <Badge 
+                              variant="outline"
+                              className={
+                                request.method === 'GET' ? 'border-green-500 text-green-700' :
+                                request.method === 'POST' ? 'border-blue-500 text-blue-700' :
+                                request.method === 'PUT' ? 'border-orange-500 text-orange-700' :
+                                request.method === 'DELETE' ? 'border-red-500 text-red-700' :
+                                ''
+                              }
+                            >
+                              {request.method}
+                            </Badge>
+                            <code className="text-sm font-mono">{request.endpoint}</code>
                           </div>
-                          {response && (
-                            <div className="flex items-center space-x-2">
-                              <Badge 
-                                variant={response.status >= 200 && response.status < 300 ? 'default' : 'destructive'}
-                              >
-                                {response.status} {response.statusText}
-                              </Badge>
-                              <Badge variant="outline">
-                                {response.duration}ms
-                              </Badge>
-                            </div>
-                          )}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent className="flex-1 flex flex-col min-h-0">
-                        {response ? (
-                          <div className="flex-1 flex flex-col space-y-3 min-h-0">
-                            <div className="flex items-center space-x-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => copyToClipboard(response.body, 'response')}
-                                className="flex items-center space-x-1"
-                              >
-                                <Copy className="h-3 w-3" />
-                                <span>Copy Response</span>
-                              </Button>
-                            </div>
-                            
-                            <div className="flex-1 min-h-0">
-                              <ScrollArea className="h-full">
-                                <pre className="text-sm font-mono whitespace-pre-wrap break-words p-4 bg-muted/50 border border-border rounded-md text-foreground">
-                                  {response.body}
-                                </pre>
-                              </ScrollArea>
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                            <div className="text-center">
-                              <Download className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                              <p>No response yet</p>
-                              <p className="text-sm">Send a request to see the response here</p>
-                            </div>
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {request.timestamp.toLocaleString()}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="history" className="flex-1 min-h-0 m-0">
-                <div className="h-full flex flex-col p-4">
-                  <Card className="flex-1 flex flex-col min-h-0">
-                    <CardHeader>
-                      <CardTitle className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <Upload className="h-5 w-5" />
-                          <span>Request History</span>
-                        </div>
-                        {requestHistory.length > 0 && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={clearHistory}
-                            className="flex items-center space-x-1"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                            <span>Clear</span>
-                          </Button>
-                        )}
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className="flex-1 min-h-0">
-                      {requestHistory.length > 0 ? (
-                        <ScrollArea className="h-full">
-                          <div className="space-y-2">
-                            {requestHistory.map((request) => (
-                              <div
-                                key={request.id}
-                                className="p-3 border border-border bg-card rounded-md cursor-pointer hover:bg-accent transition-colors"
-                                onClick={() => loadFromHistory(request)}
-                              >
-                                <div className="flex items-center space-x-2 mb-1">
-                                  <Badge variant="outline" className="text-xs font-mono">
-                                    {request.method}
-                                  </Badge>
-                                  <code className="text-sm font-mono text-foreground break-all">
-                                    {request.endpoint}
-                                  </code>
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {request.timestamp.toLocaleString()}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-                        </ScrollArea>
-                      ) : (
-                        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                          <div className="text-center">
-                            <Upload className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                            <p>No request history</p>
-                            <p className="text-sm">Your sent requests will appear here</p>
-                          </div>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                </div>
-              </TabsContent>
-            </Tabs>
-          </div>
-        </div>
-      </div>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="applications-debug" className="space-y-4">
+          <TopApplicationsDebug />
+        </TabsContent>
+      </Tabs>
     </div>
   );
-});
-
-ApiTestTool.displayName = 'ApiTestTool';
-
-export { ApiTestTool };
+}
