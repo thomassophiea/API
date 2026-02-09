@@ -1,5 +1,5 @@
-[phases.build]
-cmd = "rm -rf node_modules/.vite build dist && npm run build"
-
 [phases.install]
 cmd = "npm ci --no-cache"
+
+[phases.build]
+cmd = "rm -rf node_modules/.vite build dist && npm run build"
