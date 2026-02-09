@@ -60,9 +60,9 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
           <div className="flex justify-center mb-4">
             <img src={apiIcon} alt="API" className="h-12 w-12 dark:invert transition-all" />
           </div>
-          <CardTitle className="text-2xl text-foreground">API Test Tool</CardTitle>
+          <CardTitle className="text-2xl text-foreground">API ONE</CardTitle>
           <CardDescription className="text-muted-foreground">
-            Sign in to test and explore API endpoints
+            Sign in to API ONE
           </CardDescription>
         </CardHeader>
         <CardContent>

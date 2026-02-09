@@ -148,7 +148,7 @@ export default function App() {
           <div className="flex items-center space-x-3">
             <img src={apiIcon} alt="API" className="h-[30px] w-[30px] dark:invert transition-all" />
             <div>
-              <h1 className="text-lg font-semibold text-foreground">API Test Tool</h1>
+              <h1 className="text-lg font-semibold text-foreground">API ONE</h1>
               <p className="text-sm text-muted-foreground">
                 Test, explore, and debug API endpoints via secure encrypted communication
               </p>
@@ -158,7 +158,7 @@ export default function App() {
           <div className="flex items-center space-x-3">
             <div className="flex items-center space-x-2 text-sm text-muted-foreground">
               <div className="h-2 w-2 rounded-full bg-green-500 dark:bg-green-400"></div>
-              <span>Connected to NGINX Server</span>
+              <span>Connected to API Server</span>
             </div>
 
             <Button variant="outline" size="sm" onClick={handleQuickTest} disabled={isTestingConnection} className="flex items-center space-x-2">
