@@ -31,8 +31,8 @@ class ApiService {
     if (!password.trim()) throw new Error('Password is required');
 
     const requestBody = {
-      grant_type: 'password',
-      username: userId.trim(),
+      grantType: 'password',
+      userId: userId.trim(),
       password: password,
       scope: ''
     };
