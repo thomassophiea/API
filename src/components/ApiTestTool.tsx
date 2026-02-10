@@ -9,7 +9,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
-import { Play, Copy, Trash2, Filter, ChevronDown, ChevronRight, Code, Download, Upload, Book, Search, RefreshCw, Settings2, Loader2, History } from 'lucide-react';
+import { Play, Copy, Trash2, Filter, ChevronDown, ChevronRight, Code, Download, Upload, Book, Search, RefreshCw, Settings2, Loader2, History, FileJson, FileText, ListTree, Eye, Save } from 'lucide-react';
 import { apiService } from '../services/api';
 import { toast } from 'sonner';
 
@@ -751,6 +751,7 @@ const ApiTestTool = memo(() => {
   const [defaultsOpen, setDefaultsOpen] = useState(false);
   const [endpointTemplate, setEndpointTemplate] = useState('');
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
+  const [responseViewMode, setResponseViewMode] = useState<'pretty' | 'raw' | 'headers' | 'preview'>('pretty');
 
   useEffect(() => {
     return () => {
@@ -917,6 +918,63 @@ const ApiTestTool = memo(() => {
     }
     
     fallbackCopy();
+  }, []);
+
+  const saveResponseToFile = useCallback((content: string, filename: string) => {
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success(`Saved as ${filename}`);
+  }, []);
+
+  const getResponseContent = useCallback((mode: string, res: ApiResponse): string => {
+    switch (mode) {
+      case 'pretty':
+        try {
+          return JSON.stringify(JSON.parse(res.body), null, 2);
+        } catch {
+          return res.body;
+        }
+      case 'raw':
+        try {
+          return JSON.stringify(JSON.parse(res.body));
+        } catch {
+          return res.body;
+        }
+      case 'headers':
+        return Object.entries(res.headers)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join('\n') || 'No headers available';
+      case 'preview': {
+        try {
+          const parsed = JSON.parse(res.body);
+          const data = Array.isArray(parsed) ? parsed
+            : Array.isArray(parsed?.data) ? parsed.data
+            : Array.isArray(parsed?.items) ? parsed.items
+            : Array.isArray(parsed?.result) ? parsed.result
+            : null;
+          if (data) {
+            return `${data.length} item${data.length !== 1 ? 's' : ''} returned\n\n` +
+              data.slice(0, 5).map((item: Record<string, unknown>, i: number) =>
+                `[${i}] ${JSON.stringify(item, null, 2)}`
+              ).join('\n\n') +
+              (data.length > 5 ? `\n\n... and ${data.length - 5} more items` : '');
+          }
+          const keys = Object.keys(parsed);
+          return `Object with ${keys.length} key${keys.length !== 1 ? 's' : ''}: ${keys.join(', ')}\n\n${JSON.stringify(parsed, null, 2)}`;
+        } catch {
+          return res.body;
+        }
+      }
+      default:
+        return res.body;
+    }
   }, []);
 
   const executeRequest = useCallback(async () => {
@@ -1452,7 +1510,7 @@ const ApiTestTool = memo(() => {
                   {/* Response Section */}
                   <div className="flex-1 min-h-0 p-4 pt-2">
                     <Card className="h-full flex flex-col">
-                      <CardHeader className="pb-3">
+                      <CardHeader className="pb-2">
                         <CardTitle className="flex items-center justify-between">
                           <div className="flex items-center space-x-2">
                             <Download className="h-5 w-5" />
@@ -1460,7 +1518,7 @@ const ApiTestTool = memo(() => {
                           </div>
                           {response && (
                             <div className="flex items-center space-x-2">
-                              <Badge 
+                              <Badge
                                 variant={response.status >= 200 && response.status < 300 ? 'default' : 'destructive'}
                               >
                                 {response.status} {response.statusText}
@@ -1474,23 +1532,76 @@ const ApiTestTool = memo(() => {
                       </CardHeader>
                       <CardContent className="flex-1 flex flex-col min-h-0">
                         {response ? (
-                          <div className="flex-1 flex flex-col space-y-3 min-h-0">
-                            <div className="flex items-center space-x-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => copyToClipboard(response.body, 'response')}
-                                className="flex items-center space-x-1"
-                              >
-                                <Copy className="h-3 w-3" />
-                                <span>Copy Response</span>
-                              </Button>
+                          <div className="flex-1 flex flex-col min-h-0">
+                            {/* View mode tabs + action buttons */}
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="response-tab-bar">
+                                <button
+                                  className={`response-tab ${responseViewMode === 'pretty' ? 'response-tab-active' : ''}`}
+                                  onClick={() => setResponseViewMode('pretty')}
+                                >
+                                  <FileJson className="h-3.5 w-3.5" />
+                                  Pretty
+                                </button>
+                                <button
+                                  className={`response-tab ${responseViewMode === 'raw' ? 'response-tab-active' : ''}`}
+                                  onClick={() => setResponseViewMode('raw')}
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  Raw
+                                </button>
+                                <button
+                                  className={`response-tab ${responseViewMode === 'headers' ? 'response-tab-active' : ''}`}
+                                  onClick={() => setResponseViewMode('headers')}
+                                >
+                                  <ListTree className="h-3.5 w-3.5" />
+                                  Headers
+                                </button>
+                                <button
+                                  className={`response-tab ${responseViewMode === 'preview' ? 'response-tab-active' : ''}`}
+                                  onClick={() => setResponseViewMode('preview')}
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                  Preview
+                                </button>
+                              </div>
+                              <div className="flex items-center space-x-1">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => copyToClipboard(
+                                    getResponseContent(responseViewMode, response),
+                                    responseViewMode === 'headers' ? 'headers' : 'response'
+                                  )}
+                                >
+                                  <Copy className="h-3.5 w-3.5 mr-1" />
+                                  Copy
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 px-2 text-xs"
+                                  onClick={() => {
+                                    const ext = responseViewMode === 'headers' ? 'txt' : 'json';
+                                    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                                    saveResponseToFile(
+                                      getResponseContent(responseViewMode, response),
+                                      `response-${ts}.${ext}`
+                                    );
+                                  }}
+                                >
+                                  <Save className="h-3.5 w-3.5 mr-1" />
+                                  Save
+                                </Button>
+                              </div>
                             </div>
-                            
+
+                            {/* Response body */}
                             <div className="flex-1 min-h-0">
                               <ScrollArea className="h-full">
                                 <pre className="text-sm font-mono whitespace-pre-wrap break-words p-4 bg-muted/50 border border-border rounded-md text-foreground">
-                                  {response.body}
+                                  {getResponseContent(responseViewMode, response)}
                                 </pre>
                               </ScrollArea>
                             </div>
