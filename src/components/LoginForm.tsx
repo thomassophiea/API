@@ -13,8 +13,8 @@ interface LoginFormProps {
 }
 
 export function LoginForm({ onLoginSuccess }: LoginFormProps) {
-  const [userId, setUserId] = useState('');
-  const [password, setPassword] = useState('');
+  const [userId, setUserId] = useState('ReadOnly');
+  const [password, setPassword] = useState('ReadOnly');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
