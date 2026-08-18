@@ -27,10 +27,13 @@ COPY server.js ./server.js
 COPY server ./server
 
 # Local Gateway profile metadata (never credentials - see server/credentials.js)
-# is persisted here. Mount this as a volume to keep Gateways configured
-# across container restarts/upgrades.
+# is persisted here. Mount a volume at /app/data to keep Gateways
+# configured across container restarts/upgrades:
+#   - docker-compose: use a "volumes:" entry (see docker-compose.yml)
+#   - Railway: attach a Railway Volume mounted at /app/data
+# (No Dockerfile VOLUME instruction here - Railway's builder rejects it;
+# use the platform-native volume mechanism instead.)
 RUN mkdir -p /app/data
-VOLUME ["/app/data"]
 
 EXPOSE 3000
 
