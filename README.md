@@ -59,7 +59,17 @@ request is scoped to an explicit, selected Gateway ID.
 | Mode     | Custom Gateways | Typical use                              |
 |----------|-----------------|-------------------------------------------|
 | `local`  | Allowed          | Engineer/QA/support running this locally |
-| `hosted` | Disabled by default | Railway/public demo deployment       |
+| `hosted` | Disabled by default | Public-facing Railway deployment reachable by untrusted users |
+
+If your Railway deployment is an **internal-only tool** (e.g. behind a
+VPN, private network, or otherwise not exposed to the public internet)
+rather than a public demo, it's reasonable to run it in `local` mode
+on Railway too so it behaves identically to a local install (multiple
+Gateways, no restrictions). Set `APP_MODE=local` in the Railway
+project's environment variables. Only do this if the deployment is not
+reachable by untrusted/anonymous users - the SSRF protections in
+`hosted` mode exist specifically to stop a *public* deployment from
+being used as an open proxy into private infrastructure.
 
 ## Fastest local start (Docker)
 
