@@ -7,6 +7,11 @@ import { redact } from './redact.js';
 const HOP_BY_HOP = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length',
+  // undici already decompresses the response body when we call
+  // .text()/.arrayBuffer() below, so forwarding the upstream
+  // Content-Encoding header verbatim causes browsers to try to
+  // decompress an already-decompressed body (net::ERR_CONTENT_DECODING_FAILED).
+  'content-encoding',
 ]);
 
 /**

@@ -3,6 +3,8 @@ import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
+import zlib from 'zlib';
+import http from 'http';
 import express from 'express';
 import request from 'supertest';
 
@@ -143,6 +145,37 @@ describe('Gateway routes - local mode', () => {
   it('proxy 404s for an unknown Gateway ID', async () => {
     const res = await request(app).get('/api/gateways/does-not-exist/proxy/management/v1/globalsettings');
     expect(res.status).toBe(404);
+  });
+
+  it('proxy does not forward a stale Content-Encoding header for a gzip-compressed upstream response (regression: ERR_CONTENT_DECODING_FAILED)', async () => {
+    // undici (used by the proxy to call the real Gateway) transparently
+    // decompresses gzip/deflate responses before we read the body via
+    // .text()/.arrayBuffer(). If the proxy blindly forwards the
+    // upstream's original `Content-Encoding: gzip` header alongside the
+    // now-decompressed body, browsers try to gzip-decode plain JSON and
+    // fail with net::ERR_CONTENT_DECODING_FAILED. See server/proxy.js.
+    const payload = JSON.stringify({ ok: true });
+    const gzipped = zlib.gzipSync(payload);
+
+    const upstream = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' });
+      res.end(gzipped);
+    });
+    await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
+    const upstreamPort = upstream.address().port;
+
+    try {
+      const created = (
+        await request(app).post('/api/gateways').send({ name: 'GzipLab', host: '127.0.0.1', port: upstreamPort, protocol: 'http' })
+      ).body;
+
+      const res = await request(app).get(`/api/gateways/${created.id}/proxy/management/v1/globalsettings`);
+      expect(res.status).toBe(200);
+      expect(res.headers['content-encoding']).toBeUndefined();
+      expect(res.body).toEqual({ ok: true });
+    } finally {
+      await new Promise((resolve) => upstream.close(resolve));
+    }
   });
 });
 
