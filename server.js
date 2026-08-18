@@ -105,16 +105,22 @@ async function start() {
   });
 }
 
-start();
+// Only actually bind a port / bootstrap the legacy Gateway when this file is
+// run directly (`node server.js`), not when imported (e.g. by tests, which
+// exercise `app` directly via supertest).
+const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
+if (isMainModule) {
+  start();
 
-process.on('SIGTERM', () => {
-  console.log('[Server] SIGTERM received, shutting down gracefully');
-  process.exit(0);
-});
+  process.on('SIGTERM', () => {
+    console.log('[Server] SIGTERM received, shutting down gracefully');
+    process.exit(0);
+  });
 
-process.on('SIGINT', () => {
-  console.log('[Server] SIGINT received, shutting down gracefully');
-  process.exit(0);
-});
+  process.on('SIGINT', () => {
+    console.log('[Server] SIGINT received, shutting down gracefully');
+    process.exit(0);
+  });
+}
 
 export default app;
