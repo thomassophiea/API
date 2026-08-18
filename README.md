@@ -126,7 +126,13 @@ From the app:
 2. Fill in:
    - **Display Name** - e.g. "Orlando Lab"
    - **Gateway Host/IP** - e.g. `10.1.20.5` or `gateway.example.local`
-   - **Port** - defaults to `443`
+   - **Port** - defaults to `443`. Some Gateway/Campus Controller
+     deployments expose the Management API on a non-standard port
+     (e.g. `5825`) instead of the default HTTPS port. If Test
+     Connection fails with a generic/HTML 404 (rather than a JSON
+     error from the Gateway), the Gateway is likely reachable but on a
+     different port - check your Gateway's documented Management API
+     port and update this field accordingly.
    - **Protocol** - defaults to `HTTPS`
    - **Username** / **Password**
    - **Trust self-signed certificate** - only if this specific Gateway

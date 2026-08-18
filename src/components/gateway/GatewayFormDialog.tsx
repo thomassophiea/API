@@ -128,6 +128,12 @@ export function GatewayFormDialog({ open, onOpenChange, gateway, onSaved }: Gate
               <Input id="gw-port" type="number" value={port} onChange={(e) => setPort(e.target.value)} />
             </div>
           </div>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Some Gateway/Campus Controller deployments expose the
+            Management API on a non-standard port (e.g. 5825) instead of
+            443. If Test Connection fails with a generic 404, try your
+            Gateway's documented Management API port.
+          </p>
 
           <div className="flex items-center gap-3">
             <Label className="flex items-center gap-2 text-sm">

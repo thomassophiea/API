@@ -84,6 +84,16 @@ export async function testGatewayConnection(gateway, { username, password } = {}
       if (response.status === 401) {
         return { success: false, stage: 'auth', message: 'Authentication rejected by Gateway. HTTP 401' };
       }
+      if (response.status === 404) {
+        return {
+          success: false,
+          stage: 'auth',
+          message:
+            'Authentication failed. HTTP 404 - the Management API was not found at this host/port. ' +
+            'Some Gateways expose the Management API on a non-standard port (e.g. 5825) instead of 443. ' +
+            "Verify this Gateway's documented Management API port and update the Gateway profile.",
+        };
+      }
       return { success: false, stage: 'auth', message: `Authentication failed. HTTP ${response.status}` };
     }
     authResponse = await response.json();
