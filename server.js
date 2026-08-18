@@ -1,123 +1,99 @@
 import express from 'express';
-import { createProxyMiddleware } from 'http-proxy-middleware';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+import { computeAppMode } from './server/appMode.js';
+import { bootstrapLegacyGateway } from './server/bootstrap.js';
+import { createGatewayRouter } from './server/routes/gateways.js';
+import { createGatewayProxyRouter } from './server/proxy.js';
+import { recordRequest, getRecentRequests } from './server/requestLog.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || process.env.BACKEND_PORT || 3000;
+const appMode = computeAppMode(process.env);
 
-const CAMPUS_CONTROLLER_URL = process.env.CAMPUS_CONTROLLER_URL || 'https://tsophiea.ddns.net';
+console.log('[Server] Starting...');
+console.log(`[Server] APP_MODE=${appMode.mode} allowCustomGateways=${appMode.allowCustomGateways}`);
 
-console.log('[Proxy Server] Starting...');
-console.log('[Proxy Server] Target:', CAMPUS_CONTROLLER_URL);
-console.log('[Proxy Server] Port:', PORT);
-
+// CORS is only relevant when something other than this same server's own
+// static frontend is calling the API directly (e.g. hitting the backend
+// port straight from a browser during native development). It is
+// intentionally restricted to localhost origins rather than reflecting
+// any origin.
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      return callback(null, true);
+    }
+    return callback(null, false);
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 }));
 
+app.use(express.json({ limit: '5mb' }));
+
+// Health is intentionally independent of any Gateway being configured or reachable.
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', appMode: appMode.mode, timestamp: new Date().toISOString() });
 });
 
-// Proxy configuration
-const proxyOptions = {
-  target: CAMPUS_CONTROLLER_URL,
-  changeOrigin: true,
-  secure: false,
-  followRedirects: true,
-  logLevel: 'debug',
-  timeout: 60000,
-  proxyTimeout: 60000,
-  pathRewrite: (path, req) => {
-    if (path.includes('/platformmanager/')) {
-      const rewritten = path.replace(/^\/management\/platformmanager/, '/platformmanager');
-      console.log(`[Proxy] Path rewrite (platformmanager): ${path} -> ${rewritten}`);
-      return rewritten;
-    }
-    console.log(`[Proxy] Path preserved: ${path}`);
-    return path;
-  },
+app.get('/api/app-mode', (req, res) => {
+  res.json({ mode: appMode.mode, allowCustomGateways: appMode.allowCustomGateways });
+});
 
-  onProxyReq: (proxyReq, req, res) => {
-    const targetUrl = `${CAMPUS_CONTROLLER_URL}${req.url}`;
-    console.log(`[Proxy] ${req.method} ${req.url} -> ${targetUrl}`);
+app.get('/api/logs', (req, res) => {
+  res.json({ requests: getRecentRequests() });
+});
 
-    if (req.headers.authorization) {
-      proxyReq.setHeader('Authorization', req.headers.authorization);
-    }
-  },
+app.use('/api/gateways', createGatewayRouter({ appMode }));
+app.use('/api/gateways', createGatewayProxyRouter({ appMode, logRequest: recordRequest }));
 
-  onProxyRes: (proxyRes, req, res) => {
-    console.log(`[Proxy] ${req.method} ${req.url} <- ${proxyRes.statusCode}`);
-    proxyRes.headers['Access-Control-Allow-Origin'] = req.headers.origin || '*';
-    proxyRes.headers['Access-Control-Allow-Credentials'] = 'true';
-  },
-
-  onError: (err, req, res) => {
-    console.error(`[Proxy Error] ${req.method} ${req.url}:`, err.message);
-    res.status(500).json({
-      error: 'Proxy Error',
-      message: err.message,
-      path: req.url
-    });
-  }
-};
-
-// Proxy all /api/* requests to Campus Controller
-app.use('/api', (req, res, next) => {
-  console.log(`[Proxy Middleware] Received: ${req.method} ${req.url}`);
-  next();
-}, createProxyMiddleware(proxyOptions));
-
-// Serve static files from the build directory
+// Serve the built frontend (production / Docker / Railway).
 const buildPath = path.join(__dirname, 'build');
-console.log('[Proxy Server] Serving static files from:', buildPath);
-
 app.use(express.static(buildPath, {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.html')) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-      res.setHeader('Pragma', 'no-cache');
-      res.setHeader('Expires', '0');
     } else if (filePath.match(/\.(js|css)$/)) {
       res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     } else if (filePath.match(/\.(jpg|jpeg|png|gif|svg|ico|woff|woff2|ttf|eot)$/)) {
       res.setHeader('Cache-Control', 'public, max-age=604800');
     }
-  }
+  },
 }));
 
-// Handle React routing - serve index.html for all non-API routes
-app.get('*', (req, res) => {
-  if (req.path.startsWith('/api/')) {
-    return res.status(404).json({ error: 'API endpoint not found' });
-  }
-  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  res.sendFile(path.join(buildPath, 'index.html'));
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'API endpoint not found' });
+  res.sendFile(path.join(buildPath, 'index.html'), (err) => {
+    if (err) next();
+  });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`[Proxy Server] Running on port ${PORT}`);
-  console.log(`[Proxy Server] Proxying /api/* to ${CAMPUS_CONTROLLER_URL}`);
-  console.log(`[Proxy Server] Health check available at http://localhost:${PORT}/health`);
-});
+async function start() {
+  await bootstrapLegacyGateway(appMode.legacyGatewayUrl);
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Server] Running on port ${PORT}`);
+    console.log(`[Server] Health check: http://localhost:${PORT}/health`);
+  });
+}
+
+start();
 
 process.on('SIGTERM', () => {
-  console.log('[Proxy Server] SIGTERM received, shutting down gracefully');
+  console.log('[Server] SIGTERM received, shutting down gracefully');
   process.exit(0);
 });
 
 process.on('SIGINT', () => {
-  console.log('[Proxy Server] SIGINT received, shutting down gracefully');
+  console.log('[Server] SIGINT received, shutting down gracefully');
   process.exit(0);
 });
+
+export default app;
