@@ -22,7 +22,12 @@ export function createGatewayProxyRouter({ appMode, logRequest }) {
   const router = Router();
 
   router.all('/:id/proxy/*', async (req, res) => {
-    const gateway = await gatewayStore.get(req.params.id);
+    let gateway;
+    try {
+      gateway = await gatewayStore.get(req.params.id);
+    } catch (err) {
+      return res.status(500).json({ error: 'Failed to load Gateway profile', message: err.message });
+    }
     if (!gateway) {
       return res.status(404).json({ error: 'Gateway not found' });
     }

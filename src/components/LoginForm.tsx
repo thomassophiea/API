@@ -4,17 +4,20 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Alert, AlertDescription } from './ui/alert';
-import { Loader2, Wifi, AlertCircle, CheckCircle } from 'lucide-react';
+import { Loader2, Wifi, AlertCircle, CheckCircle, Settings } from 'lucide-react';
 import { apiService } from '../services/api';
+import { useGateway } from '../contexts/GatewayContext';
 import apiIcon from 'figma:asset/9b113141d05aa63f60dde131842d18390c8c9401.png';
 
 interface LoginFormProps {
   onLoginSuccess: () => void;
+  onManageGateways: () => void;
 }
 
-export function LoginForm({ onLoginSuccess }: LoginFormProps) {
-  const [userId, setUserId] = useState('ReadOnly');
-  const [password, setPassword] = useState('ReadOnly');
+export function LoginForm({ onLoginSuccess, onManageGateways }: LoginFormProps) {
+  const { activeGateway, testGateway } = useGateway();
+  const [userId, setUserId] = useState('');
+  const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [isTestingConnection, setIsTestingConnection] = useState(false);
@@ -36,15 +39,14 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
   };
 
   const handleTestConnection = async () => {
+    if (!activeGateway) return;
     setIsTestingConnection(true);
     setError('');
 
     try {
-      const result = await apiService.testConnectivity();
+      const result = await testGateway(activeGateway.id, userId && password ? { username: userId, password } : undefined);
       setConnectionStatus(result.success ? 'success' : 'failure');
-      if (!result.success) {
-        setError(`Connection test failed: ${result.message}`);
-      }
+      if (!result.success) setError(result.message);
     } catch (err) {
       setConnectionStatus('failure');
       setError(`Connection test error: ${err instanceof Error ? err.message : 'Unknown error'}`);
@@ -62,8 +64,13 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
           </div>
           <CardTitle className="text-2xl text-foreground">API ONE</CardTitle>
           <CardDescription className="text-muted-foreground">
-            Sign in to API ONE
+            Sign in to {activeGateway ? activeGateway.name : 'your Gateway'}
           </CardDescription>
+          {activeGateway && (
+            <div className="text-xs text-muted-foreground font-mono">
+              {activeGateway.protocol}://{activeGateway.host}:{activeGateway.port}
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -97,11 +104,11 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
               <Alert variant="destructive">
                 <AlertDescription>
                   <div className="space-y-2">
-                    <div>{error}</div>
+                    <div className="whitespace-pre-line">{error}</div>
                     <div className="text-xs opacity-75">
                       - Verify your username and password are correct<br/>
-                      - Ensure the API server is accessible<br/>
-                      - Check network connectivity to {window.location.hostname}
+                      - Ensure the Gateway is accessible<br/>
+                      - Check network connectivity to {activeGateway?.host || 'the Gateway'}
                     </div>
                   </div>
                 </AlertDescription>
@@ -144,14 +151,19 @@ export function LoginForm({ onLoginSuccess }: LoginFormProps) {
                   </>
                 )}
               </Button>
+
+              <Button type="button" variant="ghost" className="w-full" onClick={onManageGateways}>
+                <Settings className="mr-2 h-4 w-4" />
+                Manage Gateways
+              </Button>
             </div>
           </form>
           <div className="mt-6 text-xs text-center text-muted-foreground space-y-2">
             <div className="pt-2 border-t border-border/50">
               <strong>Troubleshooting:</strong><br/>
-              - Use your API server username/password<br/>
-              - Ensure the server is online and accessible<br/>
-              - Check firewall settings for HTTPS (port 443)
+              - Use your Gateway's username/password<br/>
+              - Ensure the Gateway is online and accessible<br/>
+              - Check firewall settings for {activeGateway?.protocol === 'http' ? 'HTTP' : 'HTTPS'} (port {activeGateway?.port ?? 443})
             </div>
           </div>
         </CardContent>

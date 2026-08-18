@@ -28,46 +28,58 @@ function validateGatewayInput(body, { partial = false } = {}) {
 export function createGatewayRouter({ appMode }) {
   const router = Router();
 
-  router.get('/', async (req, res) => {
-    const [gateways, activeGatewayId] = await Promise.all([gatewayStore.list(), gatewayStore.getActiveId()]);
-    res.json({
-      appMode: appMode.mode,
-      allowCustomGateways: appMode.allowCustomGateways,
-      activeGatewayId,
-      gateways: gateways.map((g) => ({ ...toSafeGatewayProfile(g), hasStoredCredentials: hasCredentials(g.id) })),
-    });
+  router.get('/', async (req, res, next) => {
+    try {
+      const [gateways, activeGatewayId] = await Promise.all([gatewayStore.list(), gatewayStore.getActiveId()]);
+      res.json({
+        appMode: appMode.mode,
+        allowCustomGateways: appMode.allowCustomGateways,
+        activeGatewayId,
+        gateways: gateways.map((g) => ({ ...toSafeGatewayProfile(g), hasStoredCredentials: hasCredentials(g.id) })),
+      });
+    } catch (err) {
+      next(err);
+    }
   });
 
   router.post('/', async (req, res) => {
-    if (!appMode.allowCustomGateways) {
-      return res.status(403).json({ error: 'Adding custom Gateways is disabled in hosted mode.' });
-    }
-    const errors = validateGatewayInput(req.body);
-    if (errors.length) return res.status(400).json({ error: errors.join(' ') });
+    try {
+      if (!appMode.allowCustomGateways) {
+        return res.status(403).json({ error: 'Adding custom Gateways is disabled in hosted mode.' });
+      }
+      const errors = validateGatewayInput(req.body);
+      if (errors.length) return res.status(400).json({ error: errors.join(' ') });
 
-    const { username, password, remember = true, ...rest } = req.body;
-    const created = await gatewayStore.create({ ...rest, username });
-    if (remember && username && password) {
-      setCredentials(created.id, { username, password });
+      const { username, password, remember = true, ...rest } = req.body;
+      const created = await gatewayStore.create({ ...rest, username });
+      if (remember && username && password) {
+        setCredentials(created.id, { username, password });
+      }
+      res.status(201).json({ ...toSafeGatewayProfile(created), hasStoredCredentials: hasCredentials(created.id) });
+    } catch (err) {
+      res.status(err.statusCode || 500).json({ error: err.message });
     }
-    res.status(201).json({ ...toSafeGatewayProfile(created), hasStoredCredentials: hasCredentials(created.id) });
   });
 
   router.put('/:id', async (req, res) => {
-    const existing = await gatewayStore.get(req.params.id);
-    if (!existing) return res.status(404).json({ error: 'Gateway not found' });
-    if (!appMode.allowCustomGateways && !existing.locked) {
-      return res.status(403).json({ error: 'Editing custom Gateways is disabled in hosted mode.' });
-    }
-    const errors = validateGatewayInput(req.body, { partial: true });
-    if (errors.length) return res.status(400).json({ error: errors.join(' ') });
+    try {
+      const existing = await gatewayStore.get(req.params.id);
+      if (!existing) return res.status(404).json({ error: 'Gateway not found' });
+      if (!appMode.allowCustomGateways && !existing.locked) {
+        return res.status(403).json({ error: 'Editing custom Gateways is disabled in hosted mode.' });
+      }
+      const errors = validateGatewayInput(req.body, { partial: true });
+      if (errors.length) return res.status(400).json({ error: errors.join(' ') });
 
-    const { username, password, remember, ...rest } = req.body;
-    const updated = await gatewayStore.update(req.params.id, { ...rest, ...(username !== undefined ? { username } : {}) });
-    if (remember && username && password) {
-      setCredentials(req.params.id, { username, password });
+      const { username, password, remember, ...rest } = req.body;
+      const updated = await gatewayStore.update(req.params.id, { ...rest, ...(username !== undefined ? { username } : {}) });
+      if (remember && username && password) {
+        setCredentials(req.params.id, { username, password });
+      }
+      res.json({ ...toSafeGatewayProfile(updated), hasStoredCredentials: hasCredentials(updated.id) });
+    } catch (err) {
+      res.status(err.statusCode || 500).json({ error: err.message });
     }
-    res.json({ ...toSafeGatewayProfile(updated), hasStoredCredentials: hasCredentials(updated.id) });
   });
 
   router.delete('/:id', async (req, res) => {
@@ -90,26 +102,34 @@ export function createGatewayRouter({ appMode }) {
   });
 
   router.get('/:id/status', async (req, res) => {
-    const gateway = await gatewayStore.get(req.params.id);
-    if (!gateway) return res.status(404).json({ error: 'Gateway not found' });
-    res.json({ id: gateway.id, hasStoredCredentials: hasCredentials(gateway.id) });
+    try {
+      const gateway = await gatewayStore.get(req.params.id);
+      if (!gateway) return res.status(404).json({ error: 'Gateway not found' });
+      res.json({ id: gateway.id, hasStoredCredentials: hasCredentials(gateway.id) });
+    } catch (err) {
+      res.status(err.statusCode || 500).json({ error: err.message });
+    }
   });
 
   router.post('/:id/test', async (req, res) => {
-    const gateway = await gatewayStore.get(req.params.id);
-    if (!gateway) return res.status(404).json({ error: 'Gateway not found' });
+    try {
+      const gateway = await gatewayStore.get(req.params.id);
+      if (!gateway) return res.status(404).json({ error: 'Gateway not found' });
 
-    const bodyCreds = req.body?.username && req.body?.password ? req.body : null;
-    const creds = bodyCreds || getCredentials(gateway.id);
-    if (!creds) {
-      return res.status(400).json({ success: false, stage: 'auth', message: 'No credentials provided or stored for this Gateway.' });
-    }
+      const bodyCreds = req.body?.username && req.body?.password ? req.body : null;
+      const creds = bodyCreds || getCredentials(gateway.id);
+      if (!creds) {
+        return res.status(400).json({ success: false, stage: 'auth', message: 'No credentials provided or stored for this Gateway.' });
+      }
 
-    const result = await testGatewayConnection(gateway, creds);
-    if (result.success && (req.body?.remember ?? true) && bodyCreds) {
-      setCredentials(gateway.id, bodyCreds);
+      const result = await testGatewayConnection(gateway, creds);
+      if (result.success && (req.body?.remember ?? true) && bodyCreds) {
+        setCredentials(gateway.id, bodyCreds);
+      }
+      res.status(result.success ? 200 : 400).json(result);
+    } catch (err) {
+      res.status(err.statusCode || 500).json({ success: false, stage: 'internal', message: err.message || 'Unexpected error while testing the connection.' });
     }
-    res.status(result.success ? 200 : 400).json(result);
   });
 
   return router;

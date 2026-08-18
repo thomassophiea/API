@@ -48,13 +48,20 @@ export class GatewayStore {
 
   /** Serializes mutations so concurrent requests can't clobber each other. */
   _mutate(fn) {
-    this._writeChain = this._writeChain.then(async () => {
+    // Normalize the shared queue so a prior mutation's rejection (e.g. a
+    // validation/lock error) can never "poison" this._writeChain and break
+    // every subsequent create/update/remove/select call for the rest of the
+    // process lifetime. Each caller still gets its own result/rejection via
+    // resultPromise.
+    const previous = this._writeChain.catch(() => {});
+    const resultPromise = previous.then(async () => {
       const state = await this._load();
       const result = await fn(state);
       await this._save(state);
       return result;
     });
-    return this._writeChain;
+    this._writeChain = resultPromise.catch(() => {});
+    return resultPromise;
   }
 
   async list() {

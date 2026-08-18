@@ -8,12 +8,19 @@ import { bootstrapLegacyGateway } from './server/bootstrap.js';
 import { createGatewayRouter } from './server/routes/gateways.js';
 import { createGatewayProxyRouter } from './server/proxy.js';
 import { recordRequest, getRecentRequests } from './server/requestLog.js';
+import { redact } from './server/redact.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || process.env.BACKEND_PORT || 3000;
+// In a single-container/production deployment (Docker, Railway) this server
+// serves both the API and the built frontend, so PORT is the one port that
+// matters and typically defaults to 3000 there (see Dockerfile/docker-compose.yml).
+// In native development the Vite dev server owns port 3000 for the frontend,
+// so the backend defaults to 3001 (BACKEND_PORT) to avoid colliding with it;
+// vite.config.ts proxies /api requests to this same default.
+const PORT = process.env.PORT || process.env.BACKEND_PORT || 3001;
 const appMode = computeAppMode(process.env);
 
 console.log('[Server] Starting...');
@@ -73,6 +80,20 @@ app.get('*', (req, res, next) => {
   res.sendFile(path.join(buildPath, 'index.html'), (err) => {
     if (err) next();
   });
+});
+
+// Final safety net: any error that reaches here (thrown/rejected in a route
+// that didn't handle it) is reported as a redacted 500 instead of crashing
+// the whole process. Individual routes should still handle their own
+// expected errors with specific status codes/messages where possible.
+app.use((err, req, res, _next) => {
+  console.error('[Server] Unhandled request error:', redact({ message: err?.message, stack: err?.stack }));
+  if (res.headersSent) return;
+  res.status(err?.statusCode || 500).json({ error: 'Internal server error' });
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[Server] Unhandled promise rejection:', redact({ message: reason?.message || String(reason) }));
 });
 
 async function start() {
