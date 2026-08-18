@@ -3,3 +3,15 @@ build
 dist
 .DS_Store
 *.local
+
+# Environment variables (never commit real secrets)
+.env
+.env.*
+!.env.example
+
+# Local Gateway profile storage (non-secret metadata, but machine-specific)
+/data/*.json
+
+# Test/coverage output
+coverage
+

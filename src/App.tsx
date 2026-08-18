@@ -1,21 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 import { LoginForm } from './components/LoginForm';
 import { ApiTestTool } from './components/ApiTestTool';
+import { GatewayOnboarding } from './components/gateway/GatewayOnboarding';
+import { GatewaySelector } from './components/gateway/GatewaySelector';
+import { GatewaySettingsDialog } from './components/gateway/GatewaySettingsDialog';
+import { GatewayProvider, useGateway } from './contexts/GatewayContext';
 import { apiService } from './services/api';
 import { Toaster } from './components/ui/sonner';
 import { Button } from './components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu';
-import { Activity, LogOut, User, Moon, Sun, Monitor } from 'lucide-react';
+import { Activity, LogOut, User, Moon, Sun, Monitor, Loader2 } from 'lucide-react';
 import apiIcon from 'figma:asset/9b113141d05aa63f60dde131842d18390c8c9401.png';
 import { toast } from 'sonner';
 
 type Theme = 'light' | 'dark' | 'system';
 
-export default function App() {
+function AppShell() {
+  const { loading, activeGateway, gateways, testGateway } = useGateway();
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [adminRole, setAdminRole] = useState<string | null>(null);
   const [isTestingConnection, setIsTestingConnection] = useState(false);
   const [isMounted, setIsMounted] = useState(true);
+  const [gatewaySettingsOpen, setGatewaySettingsOpen] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
     if (typeof window !== 'undefined') {
       return (localStorage.getItem('theme') as Theme) || 'system';
@@ -23,12 +29,14 @@ export default function App() {
     return 'system';
   });
 
+  // Re-check authentication whenever the active Gateway changes, since
+  // tokens are scoped per Gateway ID (see src/services/api.ts).
   useEffect(() => {
-    if (apiService.isAuthenticated()) {
-      setIsAuthenticated(true);
-      setAdminRole(apiService.getAdminRole());
-    }
+    setIsAuthenticated(apiService.isAuthenticated());
+    setAdminRole(apiService.getAdminRole());
+  }, [activeGateway?.id]);
 
+  useEffect(() => {
     const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
       if (event.reason && typeof event.reason === 'object' && event.reason.message) {
         const errorMessage = event.reason.message;
@@ -49,7 +57,6 @@ export default function App() {
     };
 
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
-
     return () => {
       setIsMounted(false);
       window.removeEventListener('unhandledrejection', handleUnhandledRejection);
@@ -59,7 +66,6 @@ export default function App() {
   const applyTheme = useCallback((newTheme: Theme) => {
     const root = window.document.documentElement;
     root.classList.remove('light', 'dark');
-
     if (newTheme === 'system') {
       const systemTheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
       root.classList.add(systemTheme);
@@ -71,13 +77,13 @@ export default function App() {
   useEffect(() => {
     applyTheme(theme);
     localStorage.setItem('theme', theme);
-
     if (theme === 'system') {
       const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
       const handleChange = () => applyTheme('system');
       mediaQuery.addEventListener('change', handleChange);
       return () => mediaQuery.removeEventListener('change', handleChange);
     }
+    return undefined;
   }, [theme, applyTheme]);
 
   const handleLoginSuccess = useCallback(() => {
@@ -87,9 +93,7 @@ export default function App() {
 
   const handleLogout = useCallback(async () => {
     try {
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Logout timed out')), 5000)
-      );
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Logout timed out')), 5000));
       await Promise.race([apiService.logout(), timeoutPromise]);
     } catch (error) {
       console.warn('Logout error:', error);
@@ -102,41 +106,43 @@ export default function App() {
   }, [isMounted]);
 
   const handleQuickTest = useCallback(async () => {
-    if (!isMounted) return;
+    if (!isMounted || !activeGateway) return;
     setIsTestingConnection(true);
-
     try {
-      const connectivityResult = await apiService.testConnectivity();
-
-      if (!connectivityResult.success) {
-        if (!isMounted) return;
-        toast.error('Connection test failed', { description: connectivityResult.message });
-        return;
-      }
-
-      const response = await apiService.makeAuthenticatedRequest('/v1/globalsettings', { method: 'GET' });
+      const result = await testGateway(activeGateway.id);
       if (!isMounted) return;
-
-      if (response.ok) {
-        toast.success('Connection test successful!', { description: 'API server is reachable and authenticated.' });
+      if (result.success) {
+        toast.success('Connection test successful!', { description: `${result.message} (${result.latencyMs ?? '?'}ms)` });
       } else {
-        toast.error('Connection test failed', { description: `API returned status: ${response.status} ${response.statusText}` });
+        toast.error('Connection test failed', { description: result.message });
       }
     } catch (error) {
       if (!isMounted) return;
-      const description = error instanceof Error ? error.message : 'Unknown error occurred';
-      toast.error('Connection test failed', { description });
+      toast.error('Connection test failed', { description: error instanceof Error ? error.message : 'Unknown error occurred' });
     } finally {
       if (isMounted) setIsTestingConnection(false);
     }
-  }, [isMounted]);
+  }, [isMounted, activeGateway, testGateway]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (gateways.length === 0) {
+    return <GatewayOnboarding />;
+  }
 
   if (!isAuthenticated) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="w-full max-w-md">
-          <LoginForm onLoginSuccess={handleLoginSuccess} />
+          <LoginForm onLoginSuccess={handleLoginSuccess} onManageGateways={() => setGatewaySettingsOpen(true)} />
         </div>
+        <GatewaySettingsDialog open={gatewaySettingsOpen} onOpenChange={setGatewaySettingsOpen} />
       </div>
     );
   }
@@ -156,10 +162,7 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-3">
-            <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-              <div className="h-2 w-2 rounded-full bg-green-500 dark:bg-green-400"></div>
-              <span>Connected to API Server</span>
-            </div>
+            <GatewaySelector onManageGateways={() => setGatewaySettingsOpen(true)} />
 
             <Button variant="outline" size="sm" onClick={handleQuickTest} disabled={isTestingConnection} className="flex items-center space-x-2">
               <Activity className={`h-4 w-4 ${isTestingConnection ? 'animate-pulse' : ''}`} />
@@ -204,7 +207,16 @@ export default function App() {
         <ApiTestTool />
       </main>
 
+      <GatewaySettingsDialog open={gatewaySettingsOpen} onOpenChange={setGatewaySettingsOpen} />
       <Toaster />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <GatewayProvider>
+      <AppShell />
+    </GatewayProvider>
   );
 }
