@@ -148,14 +148,24 @@ export function GatewayFormDialog({ open, onOpenChange, gateway, onSaved }: Gate
 
           <div className="grid grid-cols-2 gap-2">
             <div className="space-y-1.5">
-              <Label htmlFor="gw-user">Username</Label>
+              <Label htmlFor="gw-user">
+                Username <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
               <Input id="gw-user" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="gw-pass">Password</Label>
+              <Label htmlFor="gw-pass">
+                Password <span className="font-normal text-muted-foreground">(optional)</span>
+              </Label>
               <Input id="gw-pass" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" placeholder={isEdit ? 'Leave blank to keep current' : ''} />
             </div>
           </div>
+          <p className="text-xs text-muted-foreground -mt-1">
+            Only Display Name and Host/IP are required. Credentials are
+            needed for Test Connection to complete authentication, and to
+            skip the sign-in screen after adding. Leave them blank and
+            you will simply be asked to sign in instead.
+          </p>
 
           <div className="flex items-center justify-between rounded-md border border-border p-3">
             <div>
