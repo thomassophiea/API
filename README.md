@@ -122,8 +122,10 @@ Other useful scripts:
 npm run dev:server   # backend only
 npm run dev:frontend # frontend only (Vite)
 npm run build        # production frontend build -> build/
+npm run typecheck    # TypeScript, no emit (must be clean)
 npm start             # run the production server (serves build/ + API)
 npm test              # run the automated test suite (vitest)
+npm run verify        # typecheck + build + tests, in that order
 ```
 
 ## Adding a Gateway
@@ -285,6 +287,22 @@ Feature code (e.g. `src/components/ApiTestTool.tsx`) calls the shared
 `apiService`/`gatewayClient`, never `fetch()` directly against a
 Gateway - this keeps Gateway communication centralized instead of
 scattered across UI components.
+
+### Styling
+
+The frontend is styled with **Tailwind CSS v4**, compiled at build time
+by `@tailwindcss/vite` (registered in `vite.config.ts`).
+`src/index.css` is the single CSS entry point and the source of truth
+for design tokens; there is no `tailwind.config.js` - v4 is configured
+from CSS via `@theme inline`.
+
+Do not commit compiled CSS in place of this source file. A pre-compiled
+snapshot was committed here previously, which froze the utility set at
+whatever the app used the day it was generated and silently turned every
+Tailwind class added afterwards into a no-op (dialogs rendered
+full-bleed and uncentered, switches were invisible, and so on). If a
+utility class appears to do nothing, check that the Tailwind plugin is
+still wired up rather than working around it with inline styles.
 
 ## Tests
 

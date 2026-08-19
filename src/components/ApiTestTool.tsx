@@ -788,11 +788,13 @@ const ApiTestTool = memo(() => {
     const newCollections: Record<string, CollectionItem[]> = {};
     const newSelections: Record<string, string> = {};
 
-    results.forEach((result, index) => {
-      const config = COLLECTION_CONFIGS[index];
-      if (result.status === 'fulfilled' && result.value.items.length > 0) {
+    COLLECTION_CONFIGS.forEach((config, index) => {
+      const result = results[index];
+      if (!result) return;
+      const firstItem = result.status === 'fulfilled' ? result.value.items[0] : undefined;
+      if (result.status === 'fulfilled' && firstItem) {
         newCollections[config.key] = result.value.items;
-        newSelections[config.key] = result.value.items[0].value;
+        newSelections[config.key] = firstItem.value;
       } else {
         console.warn(`[Collections] Failed to fetch ${config.key}:`, result.status === 'rejected' ? result.reason : 'empty');
         newCollections[config.key] = [];
@@ -853,7 +855,7 @@ const ApiTestTool = memo(() => {
       return filtered;
     } else {
       if (selectedCategory in endpointCategories) {
-        const categoryEndpoints = endpointCategories[selectedCategory];
+        const categoryEndpoints = endpointCategories[selectedCategory] ?? [];
         if (!searchTerm) {
           return { [selectedCategory]: categoryEndpoints };
         }
@@ -1108,10 +1110,12 @@ const ApiTestTool = memo(() => {
     for (const param of params) {
       const paramName = param.slice(1, -1);
       const config = resolveParamConfig(endpoint.endpoint, paramName);
-      if (config && selections[config.key]) {
-        initialValues[paramName] = selections[config.key];
-      } else if (staticPlaceholders[param]) {
-        initialValues[paramName] = staticPlaceholders[param];
+      const selectedValue = config ? selections[config.key] : undefined;
+      const placeholder = staticPlaceholders[param];
+      if (selectedValue) {
+        initialValues[paramName] = selectedValue;
+      } else if (placeholder) {
+        initialValues[paramName] = placeholder;
       } else {
         initialValues[paramName] = '';
       }
