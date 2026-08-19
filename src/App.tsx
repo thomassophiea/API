@@ -10,7 +10,7 @@ import { Toaster } from './components/ui/sonner';
 import { Button } from './components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './components/ui/dropdown-menu';
 import { Activity, LogOut, User, Moon, Sun, Monitor, Loader2 } from 'lucide-react';
-import apiIcon from 'figma:asset/9b113141d05aa63f60dde131842d18390c8c9401.png';
+import apiIcon from '@/assets/app-icon.png';
 import { toast } from 'sonner';
 
 type Theme = 'light' | 'dark' | 'system';

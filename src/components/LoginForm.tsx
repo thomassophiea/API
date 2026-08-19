@@ -7,7 +7,7 @@ import { Alert, AlertDescription } from './ui/alert';
 import { Loader2, Wifi, AlertCircle, CheckCircle, Settings } from 'lucide-react';
 import { apiService } from '../services/api';
 import { useGateway } from '../contexts/GatewayContext';
-import apiIcon from 'figma:asset/9b113141d05aa63f60dde131842d18390c8c9401.png';
+import apiIcon from '@/assets/app-icon.png';
 
 interface LoginFormProps {
   onLoginSuccess: () => void;

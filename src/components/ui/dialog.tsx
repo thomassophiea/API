@@ -1,8 +1,6 @@
-"use client";
-
 import * as React from "react";
-import * as DialogPrimitive from "@radix-ui/react-dialog@1.1.6";
-import { XIcon } from "lucide-react@0.487.0";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { XIcon } from "lucide-react";
 
 import { cn } from "./utils";
 
@@ -32,32 +30,16 @@ DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, style, ...props }, ref) => {
+>(({ className, children, ...props }, ref) => {
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed z-50 grid w-full gap-4 rounded-lg border p-6 shadow-lg sm:max-w-lg overflow-y-auto",
+          "bg-background data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] max-h-[calc(100vh-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-lg border p-6 shadow-lg duration-200 sm:max-w-lg",
           className,
         )}
-        // Centering/max-width/max-height are set via inline style (not
-        // Tailwind's top-[50%]/translate-[-50%]/max-w-[calc(...)] utility
-        // classes) because this project ships a static, pre-compiled
-        // index.css snapshot rather than running the Tailwind compiler at
-        // build time - arbitrary-value utility classes that aren't
-        // already present in that snapshot are silently no-ops. Inline
-        // styles always work regardless of what utility classes happen
-        // to be included in the CSS bundle.
-        style={{
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          maxWidth: 'calc(100% - 2rem)',
-          maxHeight: 'calc(100vh - 2rem)',
-          ...style,
-        }}
         {...props}
       >
         {children}
