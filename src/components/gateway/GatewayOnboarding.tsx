@@ -12,7 +12,7 @@ export function GatewayOnboarding() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-6">
+    <div className="flex h-full items-center justify-center bg-background p-6">
       <Card className="w-full max-w-lg border-border bg-card">
         <CardHeader className="text-center space-y-2">
           <div className="flex justify-center">

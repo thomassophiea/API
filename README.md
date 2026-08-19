@@ -1,5 +1,12 @@
 # API ONE
 
+> ⚠️ **Unofficial and unsupported.** This is not an Extreme Networks
+> product. It is an independent engineering utility, provided as-is with
+> no warranty, no support, and no guarantee of correctness or
+> compatibility with any Gateway firmware version. It is not endorsed by
+> or affiliated with Extreme Networks. **Use at your own risk** —
+> especially against production infrastructure.
+
 **API ONE** is a lightweight, Postman-style API explorer and connection
 manager for interacting with Extreme Networks **Gateways**. It runs as a
 small Node/Express backend serving a React frontend, and can operate in

@@ -5,6 +5,7 @@ import { GatewayOnboarding } from './components/gateway/GatewayOnboarding';
 import { GatewaySelector } from './components/gateway/GatewaySelector';
 import { GatewaySettingsDialog } from './components/gateway/GatewaySettingsDialog';
 import { GatewayProvider, useGateway } from './contexts/GatewayContext';
+import { DisclaimerBanner } from './components/DisclaimerBanner';
 import { apiService } from './services/api';
 import { Toaster } from './components/ui/sonner';
 import { Button } from './components/ui/button';
@@ -126,7 +127,7 @@ function AppShell() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="flex h-full items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
@@ -138,7 +139,7 @@ function AppShell() {
 
   if (!isAuthenticated) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+      <div className="flex h-full items-center justify-center bg-background p-6">
         <div className="w-full max-w-md">
           <LoginForm onLoginSuccess={handleLoginSuccess} onManageGateways={() => setGatewaySettingsOpen(true)} />
         </div>
@@ -148,7 +149,7 @@ function AppShell() {
   }
 
   return (
-    <div className="h-screen bg-background flex flex-col">
+    <div className="flex h-full flex-col bg-background">
       <header className="border-b border-border bg-card/50 backdrop-blur-sm flex-shrink-0">
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center space-x-3">
@@ -216,7 +217,12 @@ function AppShell() {
 export default function App() {
   return (
     <GatewayProvider>
-      <AppShell />
+      <div className="flex h-screen flex-col">
+        <DisclaimerBanner />
+        <div className="min-h-0 flex-1 overflow-auto">
+          <AppShell />
+        </div>
+      </div>
     </GatewayProvider>
   );
 }
